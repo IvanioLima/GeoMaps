@@ -91,7 +91,8 @@ object Gpkg {
                     val gi = names.indexOfFirst { it.equals(gcol, true) }
                     while (c.moveToNext()) {
                         val blob = if (gi >= 0 && !c.isNull(gi)) c.getBlob(gi) else continue
-                        val geoms = runCatching { Wkb.fromGpkgBlob(blob) }.getOrElse { warnings += "$table: geometria ilegível"; continue }
+                        val geoms = runCatching { Wkb.fromGpkgBlob(blob) }.getOrNull()
+                        if (geoms == null) { warnings += "$table: geometria ilegível"; continue }
                         val attrs = LinkedHashMap<String, String>()
                         var name = ""; var desc = ""; var cat = ""; var folder = table; var style: FeatureStyle? = null
                         for (i in names.indices) {
