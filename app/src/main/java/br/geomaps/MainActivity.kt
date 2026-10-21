@@ -9,6 +9,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -29,7 +30,11 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        enableEdgeToEdge()
+        // Barra de status opaca (ícones claros sobre a barra azul do app); o mapa não aparece atrás dela
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.auto(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT),
+        )
         super.onCreate(savedInstanceState)
         setContent {
             GeoMapsTheme {
@@ -43,11 +48,6 @@ class MainActivity : ComponentActivity() {
                 if (s.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
                 else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
-        }
-        val first = vm.app.settings.getString("first_run") == null
-        if (first) {
-            vm.app.settings.putString("first_run", "1")
-            vm.dialog.value = br.geomaps.ui.Dialog.Battery
         }
     }
 

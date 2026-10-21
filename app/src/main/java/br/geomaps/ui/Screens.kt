@@ -285,7 +285,7 @@ fun SettingsScreen(vm: MainViewModel) {
             Text("Limite do cache offline: ${s.cacheLimitMb} MB")
             Slider(s.cacheLimitMb.toFloat(), { v -> st.update { it.copy(cacheLimitMb = (v / 256).toInt() * 256) } }, valueRange = 256f..8192f)
             Row(verticalAlignment = Alignment.CenterVertically) { Switch(s.labels, { v -> st.update { it.copy(labels = v) } }); Spacer(Modifier.width(8.dp)); Text("Mostrar nomes dos pontos") }
-            OutlinedTextField(s.googleKey, { v -> st.update { it.copy(googleKey = v) } }, label = { Text("Chave Google Map Tiles API") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(s.googleKey, { v -> st.update { it.copy(googleKey = v) } }, label = { Text("Chave Google Map Tiles API (opcional)") }, placeholder = { Text("Usando a chave padrão do GeoMaps") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Text("Crie em console.cloud.google.com (ative \"Map Tiles API\"). Uso somente online; há cota gratuita mensal.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
             OutlinedTextField(s.arcgisKey, { v -> st.update { it.copy(arcgisKey = v) } }, label = { Text("Chave ArcGIS (API key)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             Text("Necessária para baixar o Esri World Imagery offline pelo serviço oficial de exportação (conta gratuita de desenvolvedor ArcGIS, com privilégio de basemaps offline).",
@@ -310,7 +310,6 @@ fun SettingsScreen(vm: MainViewModel) {
             Text("Pasta: Android/data/br.geomaps.app/files/backups. Para guardar no Google Drive use Menu → Fazer backup.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
             Gap()
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { vm.dialog.value = Dialog.Battery }) { Text("Bateria / segundo plano") }
                 OutlinedButton(onClick = { vm.screen.value = Screen.GNSS }) { Text("GNSS externo") }
             }
             Gap(24)

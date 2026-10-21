@@ -33,7 +33,7 @@ data class Settings(
     val snapPx: Int = 24,
     val googleKey: String = "",
     val arcgisKey: String = "",
-    val baseMap: String = "osm",
+    val baseMap: String = "g_sat",
     val overlays: Set<String> = emptySet(),
     val labels: Boolean = true,
     /** "internal" ou "bt" */
@@ -47,13 +47,25 @@ data class Settings(
     val keepScreenOn: Boolean = true,
     val telemetry: Boolean = false,
 ) {
+    /** Chave usada de fato: a informada pelo usuário ou a chave padrão do GeoMaps. */
+    val googleKeyEffective get() = googleKey.ifBlank { DEFAULT_GOOGLE_KEY }
     val coordPrefs get() = CoordPrefs(coordSystem, datum, fixedZone, fixedSouth)
     val intervalMs get() = if (gpsProfile == GpsProfile.CUSTOM) customIntervalSec * 1000L else gpsProfile.intervalMs
     val distanceM get() = if (gpsProfile == GpsProfile.CUSTOM) customDistanceM.toFloat() else gpsProfile.distanceM
 }
 
+/** Chave padrão da Google Map Tiles API do GeoMaps (projeto do usuário no Google Cloud). */
+const val DEFAULT_GOOGLE_KEY = "AIzaSyDnHzUpFxFUo-JFzdEUy3S1VPruYY15ZpY"
+
 class SettingsStore(context: Context) {
     private val sp: SharedPreferences = context.getSharedPreferences("geomaps_settings", Context.MODE_PRIVATE)
+    init {
+        // Versão 0.2: a chave Google passou a vir embutida — base padrão vira Google Satélite uma única vez
+        if (!sp.getBoolean("mig_v2_base", false)) {
+            sp.edit().putString("baseMap", "g_sat").putBoolean("mig_v2_base", true).apply()
+        }
+    }
+
     private val _flow = MutableStateFlow(load())
     val flow: StateFlow<Settings> = _flow
     val value get() = _flow.value

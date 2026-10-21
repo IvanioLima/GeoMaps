@@ -60,7 +60,6 @@ sealed interface Dialog {
     data object FinishRecording : Dialog
     data class OfflineDownload(val purpose: String, val ring: List<Coord>, val free: Boolean) : Dialog
     data object Converter : Dialog
-    data object Battery : Dialog
     data class Photo(val path: String) : Dialog
     data class MoveToProject(val featureId: Long) : Dialog
 }

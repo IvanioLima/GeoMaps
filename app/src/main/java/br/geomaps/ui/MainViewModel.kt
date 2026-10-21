@@ -133,7 +133,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            combine(settings.map { Triple(it.baseMap, it.overlays, it.googleKey + "|" + it.arcgisKey) }.distinctUntilChanged(), offline.areas, customSources) { a, b, c -> Triple(a, b, c) }
+            combine(settings.map { Triple(it.baseMap, it.overlays, it.googleKeyEffective + "|" + it.arcgisKey) }.distinctUntilChanged(), offline.areas, customSources) { a, b, c -> Triple(a, b, c) }
                 .collect { applyBase() }
         }
         viewModelScope.launch { offline.messages.collect { m -> if (m != null) { message.value = m; offline.consumeMessage() } } }
@@ -174,15 +174,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             val tiles: List<String> = when {
                 base.needsKey == "google" -> {
-                    if (s.googleKey.isBlank()) {
+                    if (s.googleKeyEffective.isBlank()) {
                         message.value = "Para usar as camadas do Google, informe a chave da Map Tiles API em Configurações."
                         app.settings.update { it.copy(baseMap = "osm") }
                         return@launch
                     }
                     val session = withContext(Dispatchers.IO) { runCatching { BaseMaps.googleSession(app.settings, base.id) } }
-                    session.getOrNull()?.let { BaseMaps.googleTiles(it, s.googleKey) } ?: run {
-                        message.value = "Google indisponível: ${session.exceptionOrNull()?.message ?: "sem conexão"}"
-                        app.settings.update { it.copy(baseMap = "osm") }
+                    session.getOrNull()?.let { BaseMaps.googleTiles(it, s.googleKeyEffective) } ?: run {
+                        // Sem conexão para abrir a sessão do Google: mostra uma base alternativa sem mudar a escolha do usuário
+                        val hasVector = offline.areas.value.any { it.kind == "vector" && it.size > 0 }
+                        message.value = "Google indisponível agora (sem conexão?). Mostrando " + if (hasVector) "o OSM vetorial offline." else "o OpenStreetMap."
+                        if (hasVector) map.setStyleUrl(BaseMaps.OSM_VECTOR_STYLE)
+                        else {
+                            val osm = BaseMaps.builtIn.first { it.id == "osm" }
+                            map.setStyleJson(BaseMaps.rasterStyle(osm, osm.tiles!!, overlays, offline.rasterLayersFor("esri"), br.geomaps.map.Glyphs.urlTemplate(app)))
+                        }
                         return@launch
                     }
                 }

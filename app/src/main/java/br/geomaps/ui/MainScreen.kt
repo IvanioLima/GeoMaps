@@ -23,7 +23,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -35,7 +38,6 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Backup
-import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CloudDownload
@@ -51,6 +53,7 @@ import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.RadioButtonChecked
+import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Search
@@ -237,7 +240,6 @@ fun MainScreen(vm: MainViewModel) {
                     }
                     item(Icons.Default.Restore, "Restaurar backup") { restoreFile.launch(arrayOf("*/*")) }
                     item(Icons.Default.Settings, "Configurações") { vm.screen.value = Screen.SETTINGS }
-                    item(Icons.Default.BatteryChargingFull, "Segundo plano e bateria") { vm.dialog.value = Dialog.Battery }
                     item(Icons.Default.Info, "Sobre") { vm.screen.value = Screen.ABOUT }
                     Gap(16)
                 }
@@ -253,7 +255,12 @@ fun MainScreen(vm: MainViewModel) {
             if (mode == Mode.Freehand) FreehandOverlay(vm)
 
             // ---------------------------------------------------------- topo
-            Column(Modifier.align(Alignment.TopCenter).fillMaxWidth().statusBarsPadding()) {
+            Column(Modifier.align(Alignment.TopCenter).fillMaxWidth()) {
+                // Fundo sólido atrás da barra de notificações do Android
+                Spacer(
+                    Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars)
+                        .background(MaterialTheme.colorScheme.primary),
+                )
                 TopBar(
                     vm = vm, projectName = active?.name ?: "—", projects = projects.map { it.id to it.name },
                     canUndo = canUndo, canRedo = canRedo,
@@ -324,6 +331,18 @@ fun MainScreen(vm: MainViewModel) {
                 }
             }
 
+            // Zoom + / − (útil em campo, com luvas ou uma mão só)
+            if (mode != Mode.Freehand) Surface(
+                Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
+                shape = MaterialTheme.shapes.medium, color = Color(0xFF263238).copy(alpha = 0.85f), shadowElevation = 4.dp,
+            ) {
+                Column {
+                    IconButton(onClick = { vm.map.zoomBy(1.0) }) { Icon(Icons.Default.Add, "Aproximar", tint = Color.White) }
+                    HorizontalDivider(Modifier.width(48.dp), color = Color.White.copy(alpha = 0.25f))
+                    IconButton(onClick = { vm.map.zoomBy(-1.0) }) { Icon(Icons.Default.Remove, "Afastar", tint = Color.White) }
+                }
+            }
+
             busy?.let {
                 Surface(Modifier.align(Alignment.Center), shape = MaterialTheme.shapes.medium, shadowElevation = 6.dp) {
                     Row(Modifier.padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -391,7 +410,7 @@ private fun TopBar(
     var projMenu by remember { mutableStateOf(false) }
     var more by remember { mutableStateOf(false) }
     val settings by vm.settings.collectAsStateWithLifecycle()
-    Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.94f), shadowElevation = 4.dp) {
+    Surface(color = MaterialTheme.colorScheme.primary, shadowElevation = 4.dp) {
         Row(Modifier.fillMaxWidth().height(52.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onMenu) { Icon(Icons.Default.Menu, "Menu", tint = Color.White) }
             Box(Modifier.weight(1f)) {

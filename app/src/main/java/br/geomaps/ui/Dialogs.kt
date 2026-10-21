@@ -458,7 +458,6 @@ fun DialogHost(vm: MainViewModel, d: Dialog) {
         Dialog.FinishRecording -> FinishRecordingDialog(vm, settings)
         is Dialog.OfflineDownload -> OfflineDownloadDialog(vm, d, settings)
         Dialog.Converter -> ConverterDialog(vm, settings)
-        Dialog.Battery -> BatteryDialog(vm)
         is Dialog.Photo -> {
             val f = vm.app.media.photoFile(d.path)
             val bmp = remember(d.path) { runCatching { android.graphics.BitmapFactory.decodeFile(f.path, android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }) }.getOrNull() }
@@ -920,33 +919,6 @@ fun ConverterDialog(vm: MainViewModel, s: Settings) {
                 Button(onClick = { vm.newWaypoint(Coord(lat, lon, vm.app.dem.sample(lat, lon))) }) { Text("Criar ponto") }
             }
         }
-    }
-}
-
-@Composable
-fun BatteryDialog(vm: MainViewModel) {
-    val ctx = LocalContext.current
-    val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
-    val ignoring = pm.isIgnoringBatteryOptimizations(ctx.packageName)
-    FormDialog("Funcionamento em segundo plano", { vm.dialog.value = null }, onConfirm = null) {
-        Text("Para gravar trilhas com a tela desligada, o GeoMaps usa um serviço em primeiro plano (notificação fixa) e precisa ficar fora da economia de bateria.")
-        Gap()
-        Text(if (ignoring) "✅ O GeoMaps já está liberado da otimização de bateria." else "⚠ O GeoMaps ainda está sujeito à otimização de bateria.",
-            fontWeight = FontWeight.SemiBold, color = if (ignoring) Color(0xFF2E7D32) else Color(0xFFE65100))
-        Gap()
-        Button(onClick = {
-            runCatching {
-                ctx.startActivity(Intent(AndroidSettings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + ctx.packageName)))
-            }.onFailure { ctx.startActivity(Intent(AndroidSettings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
-        }, enabled = !ignoring) { Text("Ignorar otimização de bateria") }
-        OutlinedButton(onClick = {
-            ctx.startActivity(Intent(AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)))
-        }) { Text("Abrir configurações do app") }
-        Gap()
-        Text("Xiaomi, Samsung, Motorola e outros têm economias extras. Verifique também:", fontWeight = FontWeight.SemiBold)
-        Text("• Xiaomi/Redmi: Bateria → Sem restrições; Inicialização automática ativada.\n• Samsung: Bateria → Sem restrição; remover dos \"apps em suspensão\".\n• Motorola/outros: Bateria → Otimização → Não otimizar.\n• Mantenha o GeoMaps fixado nos apps recentes (cadeado).",
-            style = MaterialTheme.typography.bodySmall)
-        TextButton(onClick = { runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://dontkillmyapp.com"))) } }) { Text("Guia por fabricante (dontkillmyapp.com)") }
     }
 }
 

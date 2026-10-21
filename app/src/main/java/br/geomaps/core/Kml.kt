@@ -191,6 +191,11 @@ object Kml {
             if (photos.isNotEmpty()) desc = desc.replace(Regex("""<img[^>]*>""", RegexOption.IGNORE_CASE), "").trim()
         }
 
+        // Atributos repetidos na descrição (tabelas HTML, "campo: valor") vão só para a tabela de atributos
+        val (cleanDesc, extra) = DescCleaner.split(desc, attrs)
+        for ((k, v) in extra) if (!attrs.containsKey(k)) attrs[k] = v
+        desc = cleanDesc
+
         var iconKey = FeatureStyle.DEFAULT_ICON
         st.iconHref?.let { href ->
             iconKey = "href:$href"

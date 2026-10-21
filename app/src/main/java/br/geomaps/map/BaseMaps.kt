@@ -67,7 +67,7 @@ object BaseMaps {
      * O cache dos tiles é o cache HTTP do MapLibre, que respeita os cabeçalhos Cache-Control.
      */
     fun googleSession(settings: SettingsStore, id: String): String? {
-        val key = settings.value.googleKey
+        val key = settings.value.googleKeyEffective
         if (key.isBlank()) return null
         val cacheKey = "gsession_${id}_${key.hashCode()}"
         val cached = settings.getString(cacheKey)

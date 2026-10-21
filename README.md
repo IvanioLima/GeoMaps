@@ -24,13 +24,11 @@ O APK sai em `app/build/outputs/apk/debug/app-debug.apk`.
 ## Primeiros passos no app
 
 1. Permita a localização e as notificações.
-2. Em **Menu → Segundo plano e bateria**, libere o app da otimização de bateria
-   (necessário para gravar trilhas com a tela desligada).
-3. **Configurações**:
-   - Chave **Google Map Tiles API** para as camadas do Google (somente online).
+2. **Configurações**:
+   - As camadas do Google já vêm com a chave do projeto (somente online); é possível trocar a chave.
    - Chave **ArcGIS** para baixar o Esri World Imagery offline pelo serviço oficial de exportação.
    - Datum (SIRGAS 2000), sistema de coordenadas e fuso UTM fixo (ex.: 24S / 25S no RN).
-4. **Mapas offline e MDE**: baixe áreas do OSM vetorial, do Esri e o modelo de elevação
+3. **Mapas offline e MDE**: baixe áreas do OSM vetorial, do Esri e o modelo de elevação
    (Copernicus GLO-30 ou SRTM). O cache é limitado a 2 GB, apagando as áreas mais antigas.
 
 ## Funcionalidades

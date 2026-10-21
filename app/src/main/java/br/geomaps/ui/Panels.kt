@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -23,6 +24,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -65,6 +67,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import br.geomaps.core.Coord
 import br.geomaps.core.CoordFormat
+import br.geomaps.core.DescCleaner
 import br.geomaps.core.GeoFeature
 import br.geomaps.core.GeoMath
 import br.geomaps.core.Geom
@@ -296,40 +299,40 @@ fun FeatureSheet(vm: MainViewModel, f: GeoFeature, s: Settings) {
         }
         HorizontalDivider(Modifier.padding(vertical = 4.dp))
         Column(Modifier.heightIn(max = maxH).verticalScroll(rememberScrollState())) {
-            val rows = ArrayList<Pair<String, String>>()
-            if (f.description.isNotBlank()) rows += "Descrição" to f.description.replace(Regex("<[^>]+>"), " ").trim()
+            // Descrição limpa: atributos repetidos dentro dela (tabela HTML, "campo: valor") ficam só na tabela
+            val (desc, fromDesc) = remember(f.description, f.attrs) { DescCleaner.split(f.description, f.attrs) }
+            val attrs = remember(f.attrs, fromDesc) { LinkedHashMap(f.attrs).apply { fromDesc.forEach { (k, v) -> putIfAbsent(k, v) } } }
+            if (desc.isNotBlank()) {
+                Text(desc, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth().clickable {
+                    copyToClipboard(ctx, "Descrição", desc); vm.toast("Descrição copiada")
+                }.padding(bottom = 6.dp))
+            }
+            val info = ArrayList<Pair<String, String>>()
             when (val g = f.geom) {
                 is Geom.Pt -> {
-                    rows += "Coordenada" to CoordFormat.format(g.c.lat, g.c.lon, s.coordPrefs)
-                    if (s.coordSystem != br.geomaps.core.CoordSystem.DD) rows += "Lat, Lon" to CoordFormat.dd(g.c.lat, g.c.lon)
-                    g.c.ele?.let { rows += "Altitude" to "%.2f m".format(Locale.US, it) }
-                    g.c.time?.let { rows += "Data" to SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale("pt", "BR")).format(it) }
-                    vm.fix.value?.let { fx -> rows += "Distância daqui" to CoordFormat.distance(GeoMath.distance(fx.lat, fx.lon, g.c.lat, g.c.lon), s.useKm) }
+                    info += "Coordenada" to CoordFormat.format(g.c.lat, g.c.lon, s.coordPrefs)
+                    if (s.coordSystem != br.geomaps.core.CoordSystem.DD) info += "Lat, Lon" to CoordFormat.dd(g.c.lat, g.c.lon)
+                    g.c.ele?.let { info += "Altitude" to "%.2f m".format(Locale.US, it) }
+                    g.c.time?.let { info += "Data" to SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale("pt", "BR")).format(it) }
+                    vm.fix.value?.let { fx -> info += "Distância daqui" to CoordFormat.distance(GeoMath.distance(fx.lat, fx.lon, g.c.lat, g.c.lon), s.useKm) }
                 }
                 is Geom.Line -> {
-                    rows += "Comprimento" to CoordFormat.distance(GeoMath.length(g), s.useKm)
-                    rows += "Vértices" to g.allCoords().size.toString() + if (g.parts.size > 1) " em ${g.parts.size} segmentos" else ""
+                    info += "Comprimento" to CoordFormat.distance(GeoMath.length(g), s.useKm)
+                    info += "Vértices" to g.allCoords().size.toString() + if (g.parts.size > 1) " em ${g.parts.size} segmentos" else ""
                     val st = Stats.track(g.parts)
-                    st.duration?.let { rows += "Duração" to CoordFormat.duration(it) }
-                    if (st.maxEle != null) rows += "Altitude mín./máx." to "%.0f / %.0f m".format(Locale.US, st.minEle, st.maxEle)
+                    st.duration?.let { info += "Duração" to CoordFormat.duration(it) }
+                    if (st.maxEle != null) info += "Altitude mín./máx." to "%.0f / %.0f m".format(Locale.US, st.minEle, st.maxEle)
                 }
                 is Geom.Poly -> {
-                    rows += "Área" to CoordFormat.area(GeoMath.area(g, s.fixedZone, if (s.fixedZone != null) s.fixedSouth else null), s.useKm)
-                    rows += "Perímetro" to CoordFormat.distance(GeoMath.perimeter(g), s.useKm)
-                    rows += "Vértices" to g.allCoords().size.toString()
+                    info += "Área" to CoordFormat.area(GeoMath.area(g, s.fixedZone, if (s.fixedZone != null) s.fixedSouth else null), s.useKm)
+                    info += "Perímetro" to CoordFormat.distance(GeoMath.perimeter(g), s.useKm)
+                    info += "Vértices" to g.allCoords().size.toString()
                 }
             }
-            for ((k, v) in f.attrs) rows += k to v
-            for ((k, v) in rows) {
-                Row(
-                    Modifier.fillMaxWidth().clickable {
-                        copyToClipboard(ctx, k, v)
-                        vm.toast("Copiado: $k")
-                    }.padding(vertical = 5.dp),
-                ) {
-                    Text(k, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary, modifier = Modifier.width(118.dp))
-                    Text(v, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                }
+            AttrTable("Informações", info, ctx, vm)
+            if (attrs.isNotEmpty()) {
+                Gap(8)
+                AttrTable("Atributos (${attrs.size})", attrs.toList(), ctx, vm, copyAll = true)
             }
             if (f.photos.isNotEmpty()) {
                 Gap(4)
@@ -337,7 +340,7 @@ fun FeatureSheet(vm: MainViewModel, f: GeoFeature, s: Settings) {
                     for (p in f.photos) PhotoThumb(vm.app.media.photoFile(p)) { vm.dialog.value = Dialog.Photo(p) }
                 }
             }
-            Text("Toque num atributo para copiar", style = MaterialTheme.typography.labelSmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
+            Text("Toque num valor para copiar", style = MaterialTheme.typography.labelSmall, color = Color.Gray, modifier = Modifier.padding(top = 4.dp))
         }
         Gap(6)
         ScrollRow {
@@ -364,6 +367,34 @@ fun FeatureSheet(vm: MainViewModel, f: GeoFeature, s: Settings) {
             AssistChip(onClick = {
                 vm.dialog.value = Dialog.Confirm("Excluir", "Excluir \"${f.name}\"? (pode ser desfeito)") { vm.deleteFeature(f.id) }
             }, label = { Text("Excluir", color = MaterialTheme.colorScheme.error) })
+        }
+    }
+}
+
+/** Tabela de atributos com linhas alternadas; tocar copia o valor. */
+@Composable
+fun AttrTable(title: String, rows: List<Pair<String, String>>, ctx: Context, vm: MainViewModel, copyAll: Boolean = false) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+        if (copyAll) TextButton(onClick = {
+            copyToClipboard(ctx, title, rows.joinToString("\n") { "${it.first}: ${it.second}" }); vm.toast("Tabela copiada")
+        }) { Text("Copiar tudo") }
+    }
+    Surface(shape = MaterialTheme.shapes.small, tonalElevation = 1.dp, border = androidx.compose.foundation.BorderStroke(0.5.dp, Color.LightGray)) {
+        Column {
+            rows.forEachIndexed { i, (k, v) ->
+                Row(
+                    Modifier.fillMaxWidth()
+                        .background(if (i % 2 == 0) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f))
+                        .clickable { copyToClipboard(ctx, k, v); vm.toast("Copiado: $k") }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(k, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(120.dp))
+                    Text(v.ifBlank { "—" }, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Icon(Icons.Default.ContentCopy, null, tint = Color.Gray, modifier = Modifier.size(14.dp))
+                }
+            }
         }
     }
 }
@@ -466,7 +497,7 @@ fun BaseMapSheet(vm: MainViewModel, s: Settings, onClose: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text(b.name)
                             val note = when {
-                                b.needsKey == "google" && s.googleKey.isBlank() -> "Requer chave da Map Tiles API (Configurações) · só online"
+                                b.needsKey == "google" && s.googleKeyEffective.isBlank() -> "Requer chave da Map Tiles API (Configurações) · só online"
                                 b.needsKey == "google" -> "Somente online (cache conforme cabeçalhos)"
                                 b.id == "esri" -> "Offline pelo serviço oficial de exportação (chave ArcGIS)"
                                 b.id == "osm_vec" -> "Baixe regiões em Mapas offline"
