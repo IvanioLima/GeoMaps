@@ -75,6 +75,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val canRedo = MutableStateFlow(false)
     val heading = MutableStateFlow<Float?>(null)
     val freehandColor = MutableStateFlow(0xFFE53935.toInt())
+    val update = MutableStateFlow<UpdateState?>(null)
 
     val fix: StateFlow<Fix?> = hub.fix
     val selected: StateFlow<GeoFeature?> = combine(features, selectedId) { fs, id -> fs.firstOrNull { it.id == id } }
@@ -137,6 +138,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .collect { applyBase() }
         }
         viewModelScope.launch { offline.messages.collect { m -> if (m != null) { message.value = m; offline.consumeMessage() } } }
+        // Verificação automática de atualização (no máximo 1x por dia, só com internet e fora de gravação)
+        viewModelScope.launch {
+            delay(6000)
+            val u = app.updater
+            if (u.shouldAutoCheck() && u.online() && !recorder.state.value.active) checkUpdate(manual = false)
+        }
         map.onClick = { lat, lon, x, y -> onMapClick(lat, lon, x, y) }
         map.onLongClick = { lat, lon -> onLongPress(lat, lon) }
         map.onUserGesture = { if (follow.value != FollowMode.OFF) follow.value = FollowMode.OFF }
@@ -153,6 +160,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toast(s: String) { message.value = s }
+
+    // ------------------------------------------------------------------ atualização do app
+
+    fun checkUpdate(manual: Boolean) {
+        viewModelScope.launch {
+            if (manual) busy.value = "Verificando atualizações…"
+            val r = withContext(Dispatchers.IO) { runCatching { app.updater.check(ignoreSkipped = manual) } }
+            busy.value = null
+            r.onSuccess { info ->
+                if (info != null) {
+                    // nunca interrompe uma gravação: o aviso aparece depois
+                    if (!manual && recorder.state.value.active) return@onSuccess
+                    update.value = UpdateState(info)
+                } else if (manual) toast("O GeoMaps está atualizado (versão ${app.updater.currentName})")
+            }.onFailure { if (manual) toast("Não foi possível verificar: ${it.message ?: "sem conexão"}") }
+        }
+    }
+
+    fun skipUpdate() {
+        update.value?.let { app.updater.skip(it.info) }
+        update.value = null
+    }
+
+    fun downloadUpdate() {
+        val st = update.value ?: return
+        if (st.progress != null && st.apk == null && st.error == null) return
+        update.value = st.copy(progress = 0f, error = null)
+        viewModelScope.launch {
+            val r = withContext(Dispatchers.IO) {
+                runCatching { app.updater.download(st.info) { p -> update.value = update.value?.copy(progress = p) } }
+            }
+            r.onSuccess { f -> update.value = update.value?.copy(apk = f, progress = 1f); installUpdate() }
+                .onFailure { update.value = update.value?.copy(error = it.message ?: "Falha no download", progress = null) }
+        }
+    }
+
+    fun installUpdate() {
+        val apk = update.value?.apk ?: return
+        val u = app.updater
+        runCatching {
+            if (!u.canInstall()) {
+                toast("Permita que o GeoMaps instale atualizações e toque em Instalar de novo")
+                app.startActivity(u.installPermissionIntent().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } else app.startActivity(u.installIntent(apk))
+        }.onFailure { update.value = update.value?.copy(error = "Não foi possível abrir o instalador: ${it.message}") }
+    }
 
     // ------------------------------------------------------------------ base cartográfica
 

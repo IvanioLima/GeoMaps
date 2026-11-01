@@ -25,6 +25,7 @@ class GeoMapsApp : Application() {
     lateinit var recorder: TrackRecorder
     lateinit var dem: DemManager
     lateinit var offline: OfflineStore
+    lateinit var updater: br.geomaps.data.Updater
 
     override fun onCreate() {
         super.onCreate()
@@ -41,6 +42,7 @@ class GeoMapsApp : Application() {
         dem = DemManager(this, settings)
         offline = OfflineStore(this, db, settings, dem)
         offline.configureAmbientCache()
+        updater = br.geomaps.data.Updater(this, settings)
         runCatching { Backup.schedule(this, settings.value.autoBackup) }
     }
 }

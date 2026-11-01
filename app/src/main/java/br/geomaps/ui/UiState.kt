@@ -79,4 +79,12 @@ sealed interface NavState {
     data class FollowTrack(val featureId: Long, val name: String, val line: List<List<Coord>>) : NavState
 }
 
+/** Estado da atualização do app (aviso, download e instalação). */
+data class UpdateState(
+    val info: br.geomaps.data.UpdateInfo,
+    val progress: Float? = null,
+    val apk: java.io.File? = null,
+    val error: String? = null,
+)
+
 data class ExportRequest(val bytes: ByteArray, val fileName: String, val mime: String, val share: Boolean, val format: ExportFormat)

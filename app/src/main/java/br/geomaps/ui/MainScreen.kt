@@ -54,6 +54,7 @@ import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Search
@@ -240,6 +241,7 @@ fun MainScreen(vm: MainViewModel) {
                     }
                     item(Icons.Default.Restore, "Restaurar backup") { restoreFile.launch(arrayOf("*/*")) }
                     item(Icons.Default.Settings, "Configurações") { vm.screen.value = Screen.SETTINGS }
+                    item(Icons.Default.SystemUpdate, "Verificar atualizações") { vm.checkUpdate(manual = true) }
                     item(Icons.Default.Info, "Sobre") { vm.screen.value = Screen.ABOUT }
                     Gap(16)
                 }
@@ -370,6 +372,8 @@ fun MainScreen(vm: MainViewModel) {
 
     if (showBases) BaseMapSheet(vm, settings) { showBases = false }
     dialog?.let { DialogHost(vm, it) }
+    val upd by vm.update.collectAsStateWithLifecycle()
+    upd?.let { UpdateDialog(vm, it) }
 }
 
 @Composable

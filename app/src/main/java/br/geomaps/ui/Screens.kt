@@ -564,6 +564,7 @@ fun AboutScreen(vm: MainViewModel) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
             Text("GeoMaps ${br.geomaps.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
             Text("Gestão de dados espaciais e edição avançada de KML, KMZ, GPX e Shapefile.")
+            OutlinedButton(onClick = { vm.checkUpdate(manual = true) }, modifier = Modifier.padding(top = 8.dp)) { Text("Verificar atualizações") }
             SectionTitle("Fontes de dados")
             Text("• OpenStreetMap © colaboradores do OSM (ODbL)\n• OpenFreeMap / OpenMapTiles (mapa vetorial)\n• OpenTopoMap (CC-BY-SA)\n• Esri World Imagery © Esri e fornecedores\n• Google Map Tiles API © Google (somente online)\n• Copernicus DEM GLO-30 © DLR/Airbus, ESA\n• SRTM (NASA/USGS) via AWS Terrain Tiles",
                 style = MaterialTheme.typography.bodySmall)
