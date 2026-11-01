@@ -50,10 +50,29 @@ jobs:
           print(json.dumps(info, ensure_ascii=False))
           PY
 
+      - name: Conferir a credencial
+        if: env.FIREBASE_SA != ''
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          try:
+              d = json.loads(os.environ["FIREBASE_SA"])
+          except Exception as e:
+              print(f"::error::FIREBASE_SERVICE_ACCOUNT nao e um JSON valido ({e}). Cole o arquivo .json inteiro da chave da conta de servico.")
+              sys.exit(1)
+          if d.get("type") != "service_account":
+              campos = ", ".join(sorted(d.keys()))[:300]
+              print(f"::error::FIREBASE_SERVICE_ACCOUNT nao e chave de conta de servico (type={d.get('type')!r}; campos: {campos}). Use o JSON baixado em IAM > Contas de servico > Chaves > Adicionar chave (nao o google-services.json).")
+              sys.exit(1)
+          print("Conta de servico:", d.get("client_email"), "| projeto:", d.get("project_id"))
+          if d.get("project_id") != "geomapas-cc9d9":
+              print(f"::warning::A chave e do projeto {d.get('project_id')}, nao do geomapas-cc9d9.")
+          PY
+
       - name: Publicar no Firebase Hosting
         if: env.FIREBASE_SA != ''
         run: |
-          echo "$FIREBASE_SA" > "$RUNNER_TEMP/sa.json"
+          printf '%s' "$FIREBASE_SA" > "$RUNNER_TEMP/sa.json"
           export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
           npx -y firebase-tools@13 deploy --only hosting --project geomapas-cc9d9 --non-interactive
           rm -f "$RUNNER_TEMP/sa.json"
