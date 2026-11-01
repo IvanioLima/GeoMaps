@@ -1,0 +1,63 @@
+name: Publicar atualização (Firebase)
+
+# Roda depois de cada "Compilar APK" bem-sucedido: publica o APK e o latest.json
+# no Firebase Hosting, de onde o app verifica e baixa as atualizações (sem login).
+on:
+  workflow_run:
+    workflows: ["Compilar APK"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  publish:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Baixar o APK da compilação
+        uses: actions/download-artifact@v4
+        with:
+          name: GeoMaps-apk
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: dist
+
+      - name: Montar latest.json
+        env:
+          RUN: ${{ github.event.workflow_run.run_number }}
+          MSG: ${{ github.event.workflow_run.head_commit.message }}
+        run: |
+          mkdir -p public/geomaps
+          cp dist/GeoMaps.apk public/geomaps/GeoMaps.apk
+          python3 - <<'PY'
+          import hashlib, json, os
+          apk = "public/geomaps/GeoMaps.apk"
+          data = open(apk, "rb").read()
+          run = int(os.environ["RUN"])
+          notes = "\n".join(l for l in os.environ.get("MSG", "").splitlines() if l.strip() and not l.startswith(("Co-Authored-By", "Claude-Session")))[:1500]
+          info = {"versionCode": run, "versionName": f"0.3.{run}", "notes": notes,
+                  "apk": "GeoMaps.apk", "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
+          json.dump(info, open("public/geomaps/latest.json", "w"), ensure_ascii=False, indent=1)
+          json.dump({"hosting": {"public": "public", "headers": [
+              {"source": "/geomaps/latest.json", "headers": [{"key": "Cache-Control", "value": "no-cache"}]},
+              {"source": "/geomaps/*.apk", "headers": [{"key": "Cache-Control", "value": "no-cache"}]}]}},
+              open("firebase.json", "w"))
+          print(json.dumps(info, ensure_ascii=False))
+          PY
+
+      - name: Publicar no Firebase Hosting
+        if: env.FIREBASE_SA != ''
+        run: |
+          echo "$FIREBASE_SA" > "$RUNNER_TEMP/sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/sa.json"
+          npx -y firebase-tools@13 deploy --only hosting --project geomapas-cc9d9 --non-interactive
+          rm -f "$RUNNER_TEMP/sa.json"
+
+      - name: Aviso (segredo ausente)
+        if: env.FIREBASE_SA == ''
+        run: echo "::warning::Crie o segredo FIREBASE_SERVICE_ACCOUNT no GitHub para publicar as atualizações."
