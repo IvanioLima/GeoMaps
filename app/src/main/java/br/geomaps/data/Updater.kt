@@ -16,7 +16,7 @@ import br.geomaps.core.jStr
 import java.io.File
 import java.security.MessageDigest
 
-/** Informações da versão publicada no Firebase Hosting (latest.json). */
+/** Informações da versão publicada (latest.json). */
 data class UpdateInfo(
     val versionCode: Int,
     val versionName: String,
@@ -27,13 +27,14 @@ data class UpdateInfo(
 )
 
 /**
- * Atualização do app sem login: o GitHub Actions publica o APK e um latest.json no Firebase Hosting;
- * o app compara o versionCode, baixa o APK, confere o SHA-256 e abre o instalador do Android.
+ * Atualização do app sem login: o GitHub Actions publica o APK e um latest.json como release do
+ * repositório público IvanioLima/GeoMaps-releases (só binários, sem código); o app compara o
+ * versionCode, baixa o APK, confere o SHA-256 e abre o instalador do Android.
  */
 class Updater(private val context: Context, private val settings: SettingsStore) {
     companion object {
-        const val BASE = "https://geomapas-cc9d9.web.app/geomaps/"
-        const val LATEST = BASE + "latest.json"
+        const val REPO = "https://github.com/IvanioLima/GeoMaps-releases/releases/"
+        const val LATEST = REPO + "latest/download/latest.json"
         private const val DAY = 24 * 3600 * 1000L
     }
 
@@ -52,15 +53,16 @@ class Updater(private val context: Context, private val settings: SettingsStore)
     /** Consulta a versão publicada. Retorna null se não houver versão mais nova. */
     fun check(ignoreSkipped: Boolean): UpdateInfo? {
         settings.putLong("upd_last_check", System.currentTimeMillis())
-        val c = Net.open(LATEST + "?t=" + System.currentTimeMillis(), 15000)
+        val c = Net.open(LATEST, 15000)
         c.setRequestProperty("Cache-Control", "no-cache")
+        if (c.responseCode == 404) return null // ainda não há versão publicada
         if (c.responseCode !in 200..299) throw IllegalStateException("Servidor de atualização respondeu HTTP ${c.responseCode}")
         val m = Json.parse(c.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }).jObj() ?: return null
         val info = UpdateInfo(
             versionCode = m["versionCode"].jNum()?.toInt() ?: return null,
             versionName = m["versionName"].jStr() ?: "",
             notes = m["notes"].jStr() ?: "",
-            apkUrl = m["apk"].jStr()?.let { if (it.startsWith("http")) it else BASE + it } ?: return null,
+            apkUrl = m["apk"].jStr()?.let { if (it.startsWith("http")) it else REPO + "latest/download/" + it } ?: return null,
             sha256 = m["sha256"].jStr(),
             size = m["size"].jNum()?.toLong() ?: 0,
         )
