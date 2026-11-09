@@ -29,6 +29,14 @@ jobs:
           github-token: ${{ github.token }}
           path: dist
 
+      - name: Ler a versão do código
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          path: src
+          sparse-checkout: app/build.gradle.kts
+          sparse-checkout-cone-mode: false
+
       - name: Montar latest.json
         env:
           RUN: ${{ github.event.workflow_run.run_number }}
@@ -40,9 +48,11 @@ jobs:
           import hashlib, json, os
           data = open("out/GeoMaps.apk", "rb").read()
           run = int(os.environ["RUN"])
-          tag = f"v0.3.{run}"
+          import re
+          ver = re.search(r'appVersion = "([^"]+)"', open("src/app/build.gradle.kts").read()).group(1)
+          tag = f"v{ver}-b{run}"
           notes = "\n".join(l for l in os.environ.get("MSG", "").splitlines() if l.strip() and not l.startswith(("Co-Authored-By", "Claude-Session")))[:1500]
-          info = {"versionCode": run, "versionName": f"0.3.{run}", "notes": notes,
+          info = {"versionCode": run, "versionName": f"{ver} (build {run})", "notes": notes,
                   "apk": f"https://github.com/{os.environ['DEST']}/releases/download/{tag}/GeoMaps.apk",
                   "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)}
           json.dump(info, open("out/latest.json", "w"), ensure_ascii=False, indent=1)
