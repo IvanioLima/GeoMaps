@@ -86,7 +86,6 @@ import br.geomaps.core.GeoFeature
 import br.geomaps.core.GeoMath
 import br.geomaps.core.Geom
 import br.geomaps.core.GeomType
-import br.geomaps.core.Stats
 import br.geomaps.core.TileMath
 import br.geomaps.core.TrackOps
 import br.geomaps.core.Utm
@@ -349,7 +348,7 @@ fun DialogHost(vm: MainViewModel, d: Dialog) {
         is Dialog.FeatureProps -> FeaturePropsDialog(vm, d.feature, settings)
         is Dialog.Import -> ImportDialog(vm, d)
         is Dialog.Export -> ExportDialog(vm, d, settings)
-        is Dialog.Merge -> MergeDialog(vm, d.baseId)
+        is Dialog.Merge -> MergeDialog(vm, d.baseId, d.initial)
         is Dialog.Reverse -> {
             var mirror by remember { mutableStateOf(true) }
             AlertDialog(onDismissRequest = close, title = { Text("Inverter sentido") }, text = {
@@ -405,7 +404,6 @@ fun DialogHost(vm: MainViewModel, d: Dialog) {
                 Button(onClick = { CoordFormat.num(dist)?.takeIf { it > 0 }?.let { vm.buffer(d.featureId, it) }; close() }) { Text("Criar") }
             }, dismissButton = { TextButton(onClick = close) { Text("Cancelar") } })
         }
-        is Dialog.Stats -> StatsDialog(vm, d.featureId, settings)
         is Dialog.CoordInput -> {
             var c by remember { mutableStateOf<Coord?>(null) }
             val init = vm.currentCoord()
@@ -729,10 +727,16 @@ fun ExportDialog(vm: MainViewModel, d: Dialog.Export, s: Settings) {
 }
 
 @Composable
-fun MergeDialog(vm: MainViewModel, baseId: Long) {
+fun MergeDialog(vm: MainViewModel, baseId: Long, initial: List<Long>) {
     val lines = vm.features.value.filter { it.type == GeomType.LINE }
-    val order = remember { mutableStateListOf<Long>().apply { add(baseId) } }
-    val rev = remember { mutableStateMapOf<Long, Boolean>() }
+    val order = remember { mutableStateListOf<Long>().apply { addAll(initial.filter { id -> lines.any { it.id == id } }) } }
+    val rev = remember {
+        mutableStateMapOf<Long, Boolean>().apply {
+            // Trilhas escolhidas no mapa: já orienta pelas pontas mais próximas (pode ajustar abaixo)
+            val ls = order.mapNotNull { id -> (lines.firstOrNull { it.id == id }?.geom as? Geom.Line)?.allCoords() }
+            if (order.size > 1 && ls.size == order.size) TrackOps.autoOrient(ls).forEachIndexed { i, r -> put(order[i], r) }
+        }
+    }
     var connect by remember { mutableStateOf(true) }
     var keep by remember { mutableStateOf(false) }
     FormDialog("Mesclar trilhas", { vm.dialog.value = null }, "Mesclar", onConfirm = {
@@ -752,44 +756,15 @@ fun MergeDialog(vm: MainViewModel, baseId: Long) {
             val ls = order.mapNotNull { id -> (lines.firstOrNull { it.id == id }?.geom as? Geom.Line)?.allCoords() }
             if (ls.size == order.size) TrackOps.autoOrient(ls).forEachIndexed { i, r -> rev[order[i]] = r }
         }) { Text("Orientar automaticamente (pontas mais próximas)") }
+        OutlinedButton(onClick = { vm.startMergeSelect(order.toList()) }) { Text("Selecionar no mapa") }
         HorizontalDivider()
-        Text("Adicionar trilhas", style = MaterialTheme.typography.labelLarge)
+        Text("Adicionar trilhas pela lista", style = MaterialTheme.typography.labelLarge)
         for (f in lines.filter { it.id !in order }) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.clickable { order.add(f.id) }) {
             Checkbox(false, { order.add(f.id) }); Text(f.name, maxLines = 1)
         }
         HorizontalDivider()
         Row(verticalAlignment = Alignment.CenterVertically) { Switch(connect, { connect = it }); Spacer(Modifier.width(8.dp)); Text("Unir num segmento contínuo") }
         Row(verticalAlignment = Alignment.CenterVertically) { Switch(keep, { keep = it }); Spacer(Modifier.width(8.dp)); Text("Manter trilhas originais") }
-    }
-}
-
-@Composable
-fun StatsDialog(vm: MainViewModel, id: Long, s: Settings) {
-    val f = vm.features.value.firstOrNull { it.id == id } ?: return
-    val g = f.geom as? Geom.Line ?: return
-    val useDem = f.eleSource == "dem"
-    val st = remember(f) {
-        val eles = if (useDem) g.allCoords().map { vm.app.dem.sample(it.lat, it.lon) } else null
-        Stats.track(g.parts, eles, if (useDem) 2.0 else 4.0)
-    }
-    FormDialog("Estatísticas: ${f.name}", { vm.dialog.value = null }, onConfirm = null) {
-        @Composable
-        fun row(k: String, v: String?) = Row(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
-            Text(k, Modifier.weight(1f)); Text(v ?: "—", fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
-        }
-        row("Comprimento", CoordFormat.distance(st.length, s.useKm))
-        row("Pontos", st.points.toString())
-        row("Subida acumulada", "%.0f m".format(Locale.US, st.ascent))
-        row("Descida acumulada", "%.0f m".format(Locale.US, st.descent))
-        row("Altitude mínima", st.minEle?.let { "%.1f m".format(Locale.US, it) })
-        row("Altitude máxima", st.maxEle?.let { "%.1f m".format(Locale.US, it) })
-        row("Duração total", st.duration?.let { CoordFormat.duration(it) })
-        row("Tempo em movimento", st.movingTime?.let { CoordFormat.duration(it) })
-        row("Tempo parado", st.stoppedTime?.let { CoordFormat.duration(it) })
-        row("Velocidade média", st.avgSpeed?.let { "%.1f km/h".format(Locale.US, it * 3.6) })
-        row("Média em movimento", st.avgMovingSpeed?.let { "%.1f km/h".format(Locale.US, it * 3.6) })
-        row("Velocidade máxima", st.maxSpeed?.let { "%.1f km/h".format(Locale.US, it * 3.6) })
-        Text("Altitude: ${if (useDem) "modelo de elevação" else "GPS"}", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
 }
 

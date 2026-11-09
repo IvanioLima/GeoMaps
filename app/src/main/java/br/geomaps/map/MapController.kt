@@ -58,6 +58,10 @@ class MapController(private val context: Context, private val icons: IconFactory
     var onClick: ((Double, Double, Float, Float) -> Unit)? = null
     var onLongClick: ((Double, Double) -> Unit)? = null
     var onUserGesture: (() -> Unit)? = null
+    /** Chamado quando a câmera para de mover (para lembrar o último ponto visto). */
+    var onCameraIdle: ((CameraInfo) -> Unit)? = null
+    /** Posição inicial do mapa (último ponto visto); aplicada ao conectar, antes do estilo. */
+    var initialCamera: CameraInfo? = null
 
     // Últimos dados enviados (reaplicados quando o estilo muda)
     private val lastData = HashMap<String, String>()
@@ -91,8 +95,13 @@ class MapController(private val context: Context, private val icons: IconFactory
         m.uiSettings.attributionGravity = Gravity.BOTTOM or Gravity.START
         m.uiSettings.setAttributionMargins((84 * density).toInt(), 0, 0, (20 * density).toInt())
         m.setMaxZoomPreference(22.0)
+        // Abre direto no último ponto visto (ou no padrão), sem o zoom mundial inicial do MapLibre
+        val start = initialCamera ?: CameraInfo()
+        m.moveCamera(CameraUpdateFactory.newCameraPosition(
+            CameraPosition.Builder().target(LatLng(start.lat, start.lon)).zoom(start.zoom).bearing(start.bearing).build(),
+        ))
         m.addOnCameraMoveListener { updateCamera() }
-        m.addOnCameraIdleListener { updateCamera() }
+        m.addOnCameraIdleListener { updateCamera(); onCameraIdle?.invoke(_camera.value) }
         m.addOnCameraMoveStartedListener { reason ->
             if (reason == MapLibreMap.OnCameraMoveStartedListener.REASON_API_GESTURE) onUserGesture?.invoke()
         }
@@ -289,6 +298,14 @@ class MapController(private val context: Context, private val icons: IconFactory
         val kind = when (f.geom) { is Geom.Pt -> "P"; is Geom.Line -> "L"; is Geom.Poly -> "A" }
         val g = if (f.geom is Geom.Poly) mapOf("type" to "MultiLineString", "coordinates" to f.geom.polys.flatMap { p -> p.map { r -> (r + r.first()).map { pos(it) } } }) else geometry(f.geom)
         push(SRC_SEL, fc(listOf(feat(g, mapOf("kind" to kind)))))
+    }
+
+    /** Destaca várias trilhas ao mesmo tempo (seleção para mesclar). */
+    fun setHighlight(fs: List<GeoFeature>) {
+        val parts = fs.mapNotNull { (it.geom as? Geom.Line)?.parts }.flatten().filter { it.size >= 2 }
+        push(SRC_SEL, if (parts.isEmpty()) EMPTY else fc(listOf(feat(
+            mapOf("type" to "MultiLineString", "coordinates" to parts.map { p -> p.map { pos(it) } }), mapOf("kind" to "L"),
+        ))))
     }
 
     fun setRecording(segs: List<List<Coord>>) {

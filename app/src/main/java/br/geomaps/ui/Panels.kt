@@ -119,23 +119,49 @@ fun EditBar(vm: MainViewModel, m: Mode.EditVertices) {
     BarCard {
         Text(if (m.isPoint) "Mover ponto" else "Editar vértices", fontWeight = FontWeight.Bold)
         Text(
-            if (m.isPoint) "Toque no mapa ou use a mira e \"Mover p/ centro\""
-            else "${m.pts.size} vértices · ${m.selected.size} selecionado(s)" + if (m.rangeMode) " · toque no fim do intervalo" else "",
+            when {
+                m.isPoint -> "Toque no mapa ou use a mira e \"+ Centro\""
+                m.tool == VertexTool.MOVE -> "${m.pts.size} vértices · " + if (m.selected.isEmpty()) "toque no vértice a mover" else "toque no novo local do vértice"
+                m.tool == VertexTool.INSERT -> "${m.pts.size} vértices · toque no mapa para inserir no trecho mais próximo"
+                else -> "${m.pts.size} vértices · toque no vértice para excluí-lo"
+            },
             style = MaterialTheme.typography.bodySmall,
         )
+        if (!m.isPoint) {
+            Gap(6)
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                for (t in VertexTool.entries) FilterChip(selected = m.tool == t, onClick = { vm.setVertexTool(t) }, label = { Text(t.label) })
+            }
+        }
         Gap(6)
         ScrollRow {
-            AssistChip(onClick = { vm.vertexMoveToCenter() }, label = { Text("Mover p/ centro") })
-            if (!m.isPoint) {
-                AssistChip(onClick = { vm.vertexInsertAtCenter() }, label = { Text("Inserir no centro") })
-                AssistChip(onClick = { vm.vertexDelete() }, label = { Text("Excluir") })
-                AssistChip(onClick = { vm.vertexRange() }, label = { Text("Intervalo") })
-                AssistChip(onClick = { vm.vertexSelectAll() }, label = { Text("Todos") })
-                AssistChip(onClick = { vm.editNextPart() }, label = { Text("Próx. segmento") })
+            if (m.isPoint || m.tool != VertexTool.DELETE) {
+                AssistChip(onClick = { vm.drawAddCenter() }, label = { Text("+ Centro") })
+                AssistChip(onClick = { vm.dialog.value = Dialog.CoordInput("vertex") }, label = { Text("Coordenada") })
             }
-            AssistChip(onClick = { vm.dialog.value = Dialog.CoordInput("vertex") }, label = { Text(if (m.isPoint) "Coordenada" else "Inserir por coordenada") })
+            AssistChip(onClick = { vm.vertexUndo() }, label = { Text("Desfazer") }, enabled = m.history.isNotEmpty())
+            if (!m.isPoint && vm.editPartCount(m) > 1) AssistChip(onClick = { vm.editNextPart() }, label = { Text("Próx. segmento") })
             TextButton(onClick = { vm.cancelMode() }) { Text("Cancelar") }
             Button(onClick = { vm.commitVertices() }) { Text("Salvar") }
+        }
+    }
+}
+
+@Composable
+fun MergeSelectBar(vm: MainViewModel, m: Mode.MergeSelect) {
+    BarCard {
+        Text("Mesclar trilhas", fontWeight = FontWeight.Bold)
+        val names = m.order.mapIndexedNotNull { i, id -> vm.features.value.firstOrNull { it.id == id }?.let { "${i + 1}. ${it.name}" } }
+        Text(
+            if (names.isEmpty()) "Toque nas trilhas no mapa, na ordem da fusão" else "${names.size} selecionada(s): " + names.joinToString(" · "),
+            style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis,
+        )
+        Text("Toque de novo numa trilha para tirá-la da seleção", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+        Gap(6)
+        ScrollRow {
+            AssistChip(onClick = { vm.mode.value = m.copy(order = emptyList()) }, label = { Text("Limpar") })
+            TextButton(onClick = { vm.cancelMode() }) { Text("Cancelar") }
+            Button(onClick = { vm.confirmMergeSelect() }, enabled = m.order.size >= 2) { Text("Continuar") }
         }
     }
 }
@@ -352,9 +378,8 @@ fun FeatureSheet(vm: MainViewModel, f: GeoFeature, s: Settings) {
             if (f.type == GeomType.POINT) AssistChip(onClick = { vm.goTo(f) }, label = { Text("Ir até") })
             if (f.type != GeomType.POINT) AssistChip(onClick = { vm.showProfile(f.id) }, label = { Text("Perfil") })
             if (f.type == GeomType.LINE) {
-                AssistChip(onClick = { vm.dialog.value = Dialog.Stats(f.id) }, label = { Text("Estatísticas") })
                 AssistChip(onClick = { vm.followTrack(f) }, label = { Text("Seguir") })
-                AssistChip(onClick = { vm.dialog.value = Dialog.Merge(f.id) }, label = { Text("Mesclar") })
+                AssistChip(onClick = { vm.startMergeSelect(listOf(f.id)) }, label = { Text("Mesclar") })
                 AssistChip(onClick = { vm.startSplit(f.id) }, label = { Text("Dividir") })
                 AssistChip(onClick = { vm.dialog.value = Dialog.Reverse(f.id) }, label = { Text("Inverter") })
                 AssistChip(onClick = { vm.dialog.value = Dialog.FilterGps(f.id) }, label = { Text("Filtrar GPS") })
@@ -481,7 +506,6 @@ fun ProfilePanel(vm: MainViewModel, p: ProfileState, s: Settings) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BaseMapSheet(vm: MainViewModel, s: Settings, onClose: () -> Unit) {
-    val sources by vm.customSources.collectAsStateWithLifecycle()
     ModalBottomSheet(onDismissRequest = onClose) {
         Column(Modifier.padding(horizontal = 16.dp).padding(bottom = 24.dp).verticalScroll(rememberScrollState())) {
             Text("Mapa base", style = MaterialTheme.typography.titleLarge)
@@ -494,37 +518,12 @@ fun BaseMapSheet(vm: MainViewModel, s: Settings, onClose: () -> Unit) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         androidx.compose.material3.RadioButton(selected = s.baseMap == b.id, onClick = { vm.setBase(b.id); onClose() })
-                        Column(Modifier.weight(1f)) {
-                            Text(b.name)
-                            val note = when {
-                                b.needsKey == "google" && s.googleKeyEffective.isBlank() -> "Requer chave da Map Tiles API (Configurações) · só online"
-                                b.needsKey == "google" -> "Somente online (cache conforme cabeçalhos)"
-                                b.id == "esri" -> "Offline pelo serviço oficial de exportação (chave ArcGIS)"
-                                b.id == "osm_vec" -> "Baixe regiões em Mapas offline"
-                                b.offline -> "Permite download offline"
-                                else -> "Somente online"
-                            }
-                            Text(note, style = MaterialTheme.typography.bodySmall, color = Color.Gray)
-                        }
-                    }
-                }
-            }
-            val overlays = sources.filter { it.overlay }
-            if (overlays.isNotEmpty()) {
-                Text("Sobreposições", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 10.dp))
-                for (o in overlays) {
-                    val id = "c_${o.id}"
-                    Row(Modifier.fillMaxWidth().clickable { vm.toggleOverlay(id) }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                        androidx.compose.material3.Checkbox(checked = id in s.overlays, onCheckedChange = { vm.toggleOverlay(id) })
-                        Text(o.name)
+                        Text(b.name, Modifier.weight(1f))
                     }
                 }
             }
             Gap(8)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { onClose(); vm.screen.value = Screen.OFFLINE }) { Text("Mapas offline") }
-                OutlinedButton(onClick = { onClose(); vm.screen.value = Screen.SOURCES }) { Text("Camadas personalizadas") }
-            }
+            OutlinedButton(onClick = { onClose(); vm.screen.value = Screen.OFFLINE }) { Text("Mapas offline") }
         }
     }
 }

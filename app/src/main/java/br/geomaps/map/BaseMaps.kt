@@ -3,7 +3,6 @@ package br.geomaps.map
 import br.geomaps.core.Json
 import br.geomaps.core.jObj
 import br.geomaps.core.jStr
-import br.geomaps.data.Db
 import br.geomaps.data.Net
 import br.geomaps.data.SettingsStore
 
@@ -44,23 +43,9 @@ object BaseMaps {
         BaseMap("otm", "OpenTopoMap (relevo)", "OpenStreetMap",
             tiles = listOf("https://a.tile.opentopomap.org/{z}/{x}/{y}.png", "https://b.tile.opentopomap.org/{z}/{x}/{y}.png", "https://c.tile.opentopomap.org/{z}/{x}/{y}.png"),
             attribution = "© OpenStreetMap, SRTM | OpenTopoMap (CC-BY-SA)", maxZoom = 17),
-        BaseMap("osm_vec", "OSM Vetorial (offline por região)", "OpenStreetMap", styleUrl = OSM_VECTOR_STYLE,
+        BaseMap("osm_vec", "OpenStreetMap — Vetorial", "OpenStreetMap", styleUrl = OSM_VECTOR_STYLE,
             attribution = "© OpenMapTiles © OpenStreetMap | OpenFreeMap", maxZoom = 20, offline = true),
     )
-
-    fun custom(s: Db.CustomSource): BaseMap {
-        val url = when (s.type) {
-            "wms" -> {
-                val base = s.url.trim()
-                val sep = if (base.contains('?')) (if (base.endsWith("?") || base.endsWith("&")) "" else "&") else "?"
-                base + sep + "SERVICE=WMS&VERSION=1.1.1&REQUEST=GetMap&LAYERS=" + s.layers.trim() +
-                    "&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE&SRS=EPSG:3857&WIDTH=${s.tileSize}&HEIGHT=${s.tileSize}&BBOX={bbox-epsg-3857}"
-            }
-            else -> s.url.trim().replace("{TileMatrix}", "{z}").replace("{TileCol}", "{x}").replace("{TileRow}", "{y}")
-        }
-        return BaseMap("c_${s.id}", s.name, "Personalizadas", tiles = listOf(url), maxZoom = s.maxZoom, tileSize = s.tileSize,
-            offline = s.allowOffline, overlay = s.overlay, opacity = s.opacity, attribution = s.name)
-    }
 
     /**
      * Sessão da Map Tiles API (2D) do Google. O token vale ~2 semanas e fica guardado.

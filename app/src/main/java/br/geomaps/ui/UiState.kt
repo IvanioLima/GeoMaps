@@ -14,16 +14,24 @@ sealed interface Mode {
     /** Desenho manual de trilha ou área. */
     data class Draw(val type: GeomType, val pts: List<Coord> = emptyList()) : Mode
 
-    /** Edição de vértices de um elemento (trilha, área ou ponto). */
+    /**
+     * Edição de vértices de um elemento (trilha, área ou ponto). Funciona como a criação de trilhas:
+     * a ferramenta ativa decide o que o toque no mapa (ou "+ Centro" / "Coordenada") faz.
+     */
     data class EditVertices(
         val featureId: Long,
         val part: Int,
         val pts: List<Coord>,
         val closed: Boolean,
         val selected: Set<Int> = emptySet(),
-        val rangeMode: Boolean = false,
         val isPoint: Boolean = false,
+        val tool: VertexTool = VertexTool.MOVE,
+        /** Estados anteriores desta edição (para "Desfazer"). */
+        val history: List<List<Coord>> = emptyList(),
     ) : Mode
+
+    /** Seleção, tocando no mapa, das trilhas a mesclar (na ordem dos toques). */
+    data class MergeSelect(val order: List<Long>) : Mode
 
     data class Measure(val pts: List<Coord> = emptyList(), val area: Boolean = false) : Mode
 
@@ -35,7 +43,10 @@ sealed interface Mode {
     data class PickArea(val purpose: String, val free: Boolean, val pts: List<Coord> = emptyList()) : Mode
 }
 
-enum class Screen { NONE, PROJECTS, LIST, SETTINGS, OFFLINE, SOURCES, GNSS, VERSIONS, FORM, ABOUT }
+enum class Screen { NONE, PROJECTS, LIST, SETTINGS, OFFLINE, VERSIONS, FORM, ABOUT }
+
+/** Ferramentas da edição de vértices. */
+enum class VertexTool(val label: String) { MOVE("Mover"), INSERT("Inserir"), DELETE("Excluir") }
 
 enum class FollowMode { OFF, FOLLOW, HEADING }
 
@@ -46,12 +57,11 @@ sealed interface Dialog {
     data class FeatureProps(val feature: GeoFeature) : Dialog
     data class Import(val result: ImportResult, val targetProject: Long?) : Dialog
     data class Export(val projectId: Long?, val featureIds: List<Long>?, val title: String) : Dialog
-    data class Merge(val baseId: Long) : Dialog
+    data class Merge(val baseId: Long, val initial: List<Long> = listOf(baseId)) : Dialog
     data class Reverse(val featureId: Long) : Dialog
     data class Simplify(val featureId: Long) : Dialog
     data class FilterGps(val featureId: Long) : Dialog
     data class Buffer(val featureId: Long) : Dialog
-    data class Stats(val featureId: Long) : Dialog
     data class CoordInput(val purpose: String) : Dialog
     data class NewProject(val thenImport: Boolean = false) : Dialog
     data class RenameProject(val projectId: Long) : Dialog

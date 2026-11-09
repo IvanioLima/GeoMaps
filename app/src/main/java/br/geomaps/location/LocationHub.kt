@@ -14,8 +14,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
-import br.geomaps.core.NmeaFix
-import br.geomaps.core.NmeaParser
 import br.geomaps.data.SettingsStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,7 +24,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
-/** Posição consolidada (GPS interno ou receptor GNSS externo). */
+/** Posição consolidada do GPS do aparelho. */
 data class Fix(
     val lat: Double,
     val lon: Double,
@@ -68,17 +66,14 @@ class LocationHub(private val context: Context, private val settings: SettingsSt
     private var runningProfile: Pair<Long, Float>? = null
     private var geoidSep: Double? = null
     private var lastGpsFix = 0L
-    private val bt = BluetoothGnss(context)
     private var altConverter: Any? = null
 
     init {
         scope.launch {
-            settings.flow.map { Triple(it.intervalMs, it.distanceM, it.gnssSource + it.btAddress) }.distinctUntilChanged().collect {
+            settings.flow.map { it.intervalMs to it.distanceM }.distinctUntilChanged().collect {
                 if (running) { stop(); start() }
             }
         }
-        bt.onFix = { f -> main.post { onNmeaFix(f, "GNSS externo") } }
-        bt.onStatus = { s -> _status.value = s }
     }
 
     fun hasPermission() = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
@@ -142,11 +137,6 @@ class LocationHub(private val context: Context, private val settings: SettingsSt
         if (!hasPermission()) { _status.value = "Sem permissão de localização"; return }
         running = true
         val s = settings.value
-        if (s.gnssSource == "bt" && s.btAddress.isNotEmpty()) {
-            _status.value = "Conectando ao GNSS externo…"
-            bt.connect(s.btAddress)
-            return
-        }
         runningProfile = s.intervalMs to s.distanceM
         try {
             lm.requestLocationUpdates(LocationManager.GPS_PROVIDER, s.intervalMs, s.distanceM, listener, Looper.getMainLooper())
@@ -168,7 +158,6 @@ class LocationHub(private val context: Context, private val settings: SettingsSt
         runCatching { lm.removeUpdates(netListener) }
         runCatching { lm.removeNmeaListener(nmeaListener) }
         runCatching { lm.unregisterGnssStatusCallback(gnssCallback) }
-        bt.disconnect()
         _status.value = "GPS desligado"
     }
 
@@ -206,20 +195,5 @@ class LocationHub(private val context: Context, private val settings: SettingsSt
             source = if (l.provider == LocationManager.NETWORK_PROVIDER) "Rede" else "GPS interno",
         )
         _status.value = if (l.provider == LocationManager.NETWORK_PROVIDER) "Posição aproximada (rede)" else "GPS ativo"
-    }
-
-    private fun onNmeaFix(f: NmeaFix, src: String) {
-        _satellites.value = f.satellites to f.satellites
-        _fix.value = Fix(
-            lat = f.lat, lon = f.lon, altMsl = f.altMsl, altEllipsoid = f.altMsl?.let { a -> f.geoidSep?.let { a + it } },
-            accuracy = f.accuracy?.toFloat(), speed = f.speedMs?.toFloat(), bearing = f.course?.toFloat(),
-            time = f.time, satellites = f.satellites, source = src, quality = f.qualityLabel,
-        )
-        _status.value = "$src: ${f.qualityLabel}"
-    }
-
-    /** Usado pelo parser NMEA de testes/arquivo. */
-    fun injectNmea(parser: NmeaParser, line: String) {
-        parser.feed(line)?.let { onNmeaFix(it, "NMEA") }
     }
 }

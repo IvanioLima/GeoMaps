@@ -35,10 +35,12 @@ android {
         applicationId = "br.geomaps.app"
         minSdk = 26
         targetSdk = 35
+        // Versão exibida ao usuário. O workflow "Publicar atualização" lê esta linha.
+        val appVersion = "1.0.0"
         // No GitHub Actions o número da compilação vira o versionCode: toda build nova é "mais nova"
         val run = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
         versionCode = run ?: 2
-        versionName = if (run != null) "0.3.$run" else "0.3-local"
+        versionName = if (run != null) "$appVersion (build $run)" else "$appVersion-local"
     }
 
     signingConfigs {

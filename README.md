@@ -36,11 +36,11 @@ O APK sai em `app/build/outputs/apk/debug/app-debug.apk`.
 - **Arquivos**: GPX, KML, KMZ (com ícones, cores e fotos), Shapefile (.zip), GeoJSON, GeoPackage, CSV; exportação também em DXF (UTM, para CAD).
 - **Importação seletiva** por pasta/tipo, para projeto existente ou novo.
 - **Meus Mapas**: projetos com visibilidade sobreposta, projeto ativo, renomear, duplicar, mesclar, exportar, compartilhar, formulários de atributos e histórico de versões.
-- **Edição**: trilha e área manuais, vértices (mover, inserir, excluir, intervalo, por coordenada), snapping, desfazer/refazer, mesclar, dividir, inverter, simplificar (Douglas-Peucker), filtrar pontos ruins do GPS, buffer, desenho à mão livre (imagem ou linhas).
+- **Edição**: trilha e área manuais, vértices (mover, inserir e excluir, tocando no mapa ou pela mira/coordenada), snapping, desfazer/refazer, mesclar (escolhendo as trilhas no mapa), dividir, inverter, simplificar (Douglas-Peucker), filtrar pontos ruins do GPS, buffer, desenho à mão livre (imagem com coordenada e escala, ou linhas).
 - **Waypoints**: GPS, coordenada (UTM, graus decimais, GMS), toque longo no mapa, fotos com EXIF, ícones e cores, atributos copiáveis, lista com busca.
 - **Altimetria**: perfil interativo ligado ao mapa, altitude do GPS ou do MDE, estatísticas de trilha.
-- **Bases**: Google (Padrão, Terreno, Satélite), Esri World Imagery, OSM (padrão, HOT, OpenTopoMap), OSM vetorial e camadas WMS/WMTS/XYZ personalizadas.
-- **GPS**: gravação em segundo plano, seguir posição, rotação pelo rumo, telemetria, GNSS externo via Bluetooth (NMEA/RTK), ir até ponto, seguir trilha com alerta de desvio.
+- **Bases**: Google (Padrão, Terreno, Satélite), Esri World Imagery, OSM (padrão, HOT, OpenTopoMap) e OSM vetorial. O mapa abre no último ponto visto.
+- **GPS**: gravação em segundo plano, seguir posição, rotação pelo rumo, telemetria, ir até ponto, seguir trilha com alerta de desvio.
 - **Dados**: backup/restauração (`.geomaps`, pode ser salvo no Google Drive) e backup automático diário.
 
 ## Estrutura

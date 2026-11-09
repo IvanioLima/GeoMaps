@@ -38,7 +38,6 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Backup
-import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.FolderOpen
@@ -64,7 +63,6 @@ import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.DropdownMenu
@@ -229,12 +227,10 @@ fun MainScreen(vm: MainViewModel) {
                     item(Icons.AutoMirrored.Filled.List, "Lista e busca de elementos") { vm.screen.value = Screen.LIST }
                     item(Icons.Default.FolderOpen, "Importar arquivo") { openImport(null) }
                     item(Icons.Default.CloudDownload, "Mapas offline e MDE") { vm.screen.value = Screen.OFFLINE }
-                    item(Icons.Default.Wallpaper, "Camadas personalizadas (WMS/XYZ)") { vm.screen.value = Screen.SOURCES }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     item(Icons.Default.Straighten, "Medir distância e área") { vm.startMeasure() }
                     item(Icons.Default.Brush, "Desenho à mão livre") { vm.selectedId.value = null; vm.mode.value = Mode.Freehand }
                     item(Icons.Default.SwapHoriz, "Conversor de coordenadas") { vm.dialog.value = Dialog.Converter }
-                    item(Icons.Default.Bluetooth, "GNSS externo (Bluetooth)") { vm.screen.value = Screen.GNSS }
                     HorizontalDivider(Modifier.padding(vertical = 8.dp))
                     item(Icons.Default.Backup, "Fazer backup (Drive/arquivo)") {
                         backupFile.launch("geomaps_backup_" + SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(System.currentTimeMillis()) + ".geomaps")
@@ -323,6 +319,7 @@ fun MainScreen(vm: MainViewModel) {
                     is Mode.Measure -> MeasureBar(vm, m, settings)
                     is Mode.Split -> SplitBar(vm, m)
                     is Mode.PickArea -> PickAreaBar(vm, m)
+                    is Mode.MergeSelect -> MergeSelectBar(vm, m)
                     else -> {}
                 }
                 if (rec.active) RecordingPanel(vm, rec, settings)
@@ -361,8 +358,6 @@ fun MainScreen(vm: MainViewModel) {
                 Screen.LIST -> FeatureListScreen(vm)
                 Screen.SETTINGS -> SettingsScreen(vm)
                 Screen.OFFLINE -> OfflineScreen(vm)
-                Screen.SOURCES -> SourcesScreen(vm)
-                Screen.GNSS -> GnssScreen(vm)
                 Screen.VERSIONS -> VersionsScreen(vm)
                 Screen.FORM -> FormScreen(vm)
                 Screen.ABOUT -> AboutScreen(vm)
@@ -482,7 +477,7 @@ private fun PlusButton(vm: MainViewModel, recording: Boolean) {
 @Composable
 private fun FreehandOverlay(vm: MainViewModel) {
     val ctx = LocalContext.current
-    val strokes = remember { mutableStateListOf<List<Offset>>() }
+    val strokes = remember { mutableStateListOf<Pair<List<Offset>, Int>>() }
     var current by remember { mutableStateOf<List<Offset>>(emptyList()) }
     val color by vm.freehandColor.collectAsStateWithLifecycle()
     val colors = listOf(0xFFE53935.toInt(), 0xFF1E88E5.toInt(), 0xFF43A047.toInt(), 0xFFFDD835.toInt(), 0xFF000000.toInt(), 0xFFFFFFFF.toInt())
@@ -492,15 +487,15 @@ private fun FreehandOverlay(vm: MainViewModel) {
                 detectDragGestures(
                     onDragStart = { current = listOf(it) },
                     onDrag = { ch, _ -> current = current + ch.position },
-                    onDragEnd = { if (current.size > 1) strokes.add(current); current = emptyList() },
+                    onDragEnd = { if (current.size > 1) strokes.add(current to color); current = emptyList() },
                 )
             },
         ) {
             val st = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
-            for (s in strokes + listOf(current)) {
+            for ((s, c) in strokes + listOf(current to color)) {
                 if (s.size < 2) continue
                 val p = androidx.compose.ui.graphics.Path().apply { moveTo(s[0].x, s[0].y); s.drop(1).forEach { lineTo(it.x, it.y) } }
-                drawPath(p, Color(color), style = st)
+                drawPath(p, Color(c), style = st)
             }
         }
         Surface(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(10.dp), shape = MaterialTheme.shapes.large, shadowElevation = 6.dp) {
@@ -519,25 +514,32 @@ private fun FreehandOverlay(vm: MainViewModel) {
                     TextButton(onClick = { if (strokes.isNotEmpty()) strokes.removeAt(strokes.size - 1) }) { Text("Desfazer") }
                     TextButton(onClick = { strokes.clear() }) { Text("Limpar") }
                     TextButton(onClick = {
-                        vm.saveFreehandAsLines(strokes.map { s -> s.map { it.x to it.y } }, color)
+                        val byColor = strokes.groupBy { it.second }
+                        for ((c, list) in byColor) vm.saveFreehandAsLines(list.map { (s, _) -> s.map { it.x to it.y } }, c)
                     }) { Text("Salvar linhas") }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     TextButton(onClick = {
                         val snapStrokes = strokes.toList()
+                        val cam = vm.map.camera.value
+                        val fx = vm.fix.value
                         vm.map.snapshot { bmp ->
                             val out = bmp.copy(Bitmap.Config.ARGB_8888, true)
                             val cv = android.graphics.Canvas(out)
+                            val density = ctx.resources.displayMetrics.density
                             val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                                this.color = color; style = android.graphics.Paint.Style.STROKE
-                                strokeWidth = 4 * ctx.resources.displayMetrics.density; strokeCap = android.graphics.Paint.Cap.ROUND
+                                style = android.graphics.Paint.Style.STROKE
+                                strokeWidth = 4 * density; strokeCap = android.graphics.Paint.Cap.ROUND
                                 strokeJoin = android.graphics.Paint.Join.ROUND
                             }
-                            for (s in snapStrokes) {
+                            for ((s, c) in snapStrokes) {
                                 if (s.size < 2) continue
+                                paint.color = c
                                 val p = android.graphics.Path().apply { moveTo(s[0].x, s[0].y); s.drop(1).forEach { lineTo(it.x, it.y) } }
                                 cv.drawPath(p, paint)
                             }
+                            // Mantém na imagem a coordenada e a escala do canto superior direito da tela
+                            drawCoordAndScale(cv, out.width, density, fx, cam, vm.settings.value)
                             saveAndShareImage(vm, out)
                         }
                     }) { Text("Exportar imagem") }
@@ -545,6 +547,57 @@ private fun FreehandOverlay(vm: MainViewModel) {
                 }
             }
         }
+    }
+}
+
+/** Desenha a caixa de coordenada e a barra de escala (iguais às da tela) no canto superior direito da imagem. */
+private fun drawCoordAndScale(cv: android.graphics.Canvas, width: Int, d: Float, fix: br.geomaps.location.Fix?, cam: br.geomaps.map.CameraInfo, s: br.geomaps.data.Settings) {
+    val margin = 12 * d
+    val lat = fix?.lat ?: cam.lat
+    val lon = fix?.lon ?: cam.lon
+    val title = if (fix != null) "GPS" + (fix.accuracy?.let { " ±${it.toInt()} m" } ?: "") else "Centro do mapa"
+    val lines = br.geomaps.core.CoordFormat.formatLines(lat, lon, s.coordPrefs)
+    val small = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 10 * d; color = if (fix != null) 0xFF2E7D32.toInt() else 0xFF444444.toInt(); textAlign = android.graphics.Paint.Align.RIGHT
+    }
+    val mono = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = 13 * d; color = 0xFF000000.toInt(); textAlign = android.graphics.Paint.Align.RIGHT
+        typeface = android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, android.graphics.Typeface.BOLD)
+    }
+    val padH = 7 * d; val padV = 5 * d
+    val textW = maxOf(small.measureText(title), lines.maxOfOrNull { mono.measureText(it) } ?: 0f)
+    val lineH = mono.textSize * 1.25f
+    val boxW = textW + padH * 2
+    val boxH = padV * 2 + small.textSize * 1.3f + lineH * lines.size
+    val right = width - margin
+    val top = margin
+    val bg = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xDDFFFFFF.toInt() }
+    cv.drawRoundRect(right - boxW, top, right, top + boxH, 6 * d, 6 * d, bg)
+    var y = top + padV + small.textSize
+    cv.drawText(title, right - padH, y, small)
+    y += small.textSize * 0.3f
+    for (l in lines) { y += lineH; cv.drawText(l, right - padH, y - lineH * 0.2f, mono) }
+
+    // Barra de escala (mesma regra da tela: ~90 dp arredondados para 1, 2 ou 5)
+    val mpp = cam.metersPerPixel
+    if (mpp <= 0 || mpp.isNaN()) return
+    val raw = mpp * 90 * d
+    val p = Math.pow(10.0, Math.floor(Math.log10(raw)))
+    val nice = listOf(1.0, 2.0, 5.0, 10.0).map { it * p }.last { it <= raw }
+    val barW = (nice / mpp).toFloat()
+    val label = if (nice >= 1000 && s.useKm) "${(nice / 1000).let { if (it == Math.floor(it)) it.toInt().toString() else it.toString() }} km" else "${nice.toInt()} m"
+    val lp = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = 11 * d; color = 0xFF000000.toInt(); textAlign = android.graphics.Paint.Align.RIGHT }
+    val sy = top + boxH + 6 * d
+    val lw = lp.measureText(label)
+    cv.drawRoundRect(right - lw - 6 * d, sy, right, sy + lp.textSize * 1.35f, 2 * d, 2 * d, bg)
+    cv.drawText(label, right - 3 * d, sy + lp.textSize * 1.05f, lp)
+    val by = sy + lp.textSize * 1.35f + 7 * d
+    val halo = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xCCFFFFFF.toInt(); strokeWidth = 5 * d; strokeCap = android.graphics.Paint.Cap.SQUARE }
+    val bar = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF000000.toInt(); strokeWidth = 2 * d; strokeCap = android.graphics.Paint.Cap.SQUARE }
+    for (pp in listOf(halo, bar)) {
+        cv.drawLine(right - barW, by, right, by, pp)
+        cv.drawLine(right - barW, by - 6 * d, right - barW, by, pp)
+        cv.drawLine(right, by - 6 * d, right, by, pp)
     }
 }
 

@@ -77,7 +77,6 @@ import br.geomaps.core.GeomType
 import br.geomaps.data.Db
 import br.geomaps.data.GpsProfile
 import br.geomaps.data.Settings
-import br.geomaps.location.BluetoothGnss
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -161,7 +160,7 @@ fun FeatureListScreen(vm: MainViewModel) {
     val settings by vm.settings.collectAsStateWithLifecycle()
     val fix by vm.fix.collectAsStateWithLifecycle()
     var q by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf<GeomType?>(GeomType.POINT) }
+    var type by remember { mutableStateOf<GeomType?>(null) }
     var byDistance by remember { mutableStateOf(false) }
     var onlyActive by remember { mutableStateOf(false) }
     val active = vm.activeProjectId()
@@ -308,10 +307,6 @@ fun SettingsScreen(vm: MainViewModel) {
                 Text("Backup automático diário (mantém os 7 últimos)")
             }
             Text("Pasta: Android/data/br.geomaps.app/files/backups. Para guardar no Google Drive use Menu → Fazer backup.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-            Gap()
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { vm.screen.value = Screen.GNSS }) { Text("GNSS externo") }
-            }
             Gap(24)
         }
     }
@@ -368,111 +363,6 @@ fun OfflineScreen(vm: MainViewModel) {
                 }
                 HorizontalDivider()
             }
-        }
-    }
-}
-
-// ====================================================================== Fontes personalizadas
-
-@Composable
-fun SourcesScreen(vm: MainViewModel) {
-    val sources by vm.customSources.collectAsStateWithLifecycle()
-    var editing by remember { mutableStateOf<Db.CustomSource?>(null) }
-    FullScreen("Camadas personalizadas", { vm.screen.value = Screen.NONE }, actions = {
-        IconButton(onClick = { editing = Db.CustomSource(name = "", type = "xyz", url = "") }) { Icon(Icons.Default.Add, "Nova", tint = Color.White) }
-    }) {
-        Text("Adicione servidores XYZ, WMS ou WMTS (ex.: INDE, IBGE, SIGEF/INCRA ou servidores próprios). Camadas marcadas como sobreposição aparecem por cima da base.",
-            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
-        LazyColumn {
-            items(sources, key = { it.id }) { src ->
-                Row(Modifier.fillMaxWidth().clickable { editing = src }.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(src.name, fontWeight = FontWeight.SemiBold)
-                        Text("${src.type.uppercase()} · ${if (src.overlay) "sobreposição" else "base"}${if (src.allowOffline) " · offline" else ""}", style = MaterialTheme.typography.bodySmall)
-                        Text(src.url, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    IconButton(onClick = { vm.deleteCustomSource(src.id) }) { Icon(Icons.Default.Delete, "Excluir") }
-                }
-                HorizontalDivider()
-            }
-        }
-    }
-    editing?.let { e ->
-        var name by remember(e) { mutableStateOf(e.name) }
-        var type by remember(e) { mutableStateOf(e.type) }
-        var url by remember(e) { mutableStateOf(e.url) }
-        var layers by remember(e) { mutableStateOf(e.layers) }
-        var overlay by remember(e) { mutableStateOf(e.overlay) }
-        var opacity by remember(e) { mutableStateOf(e.opacity) }
-        var maxZ by remember(e) { mutableStateOf(e.maxZoom.toString()) }
-        var offline by remember(e) { mutableStateOf(e.allowOffline) }
-        FormDialog(if (e.id == 0L) "Nova camada" else "Editar camada", { editing = null }, onConfirm = {
-            if (name.isBlank() || url.isBlank()) vm.toast("Informe nome e URL")
-            else {
-                vm.saveCustomSource(e.copy(name = name.trim(), type = type, url = url.trim(), layers = layers.trim(), overlay = overlay, opacity = opacity,
-                    maxZoom = maxZ.toIntOrNull()?.coerceIn(1, 22) ?: 20, allowOffline = offline))
-                editing = null
-            }
-        }) {
-            OutlinedTextField(name, { name = it }, label = { Text("Nome") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            Row {
-                for (t in listOf("xyz", "wms", "wmts")) Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(type == t, { type = t }); Text(t.uppercase()) }
-            }
-            OutlinedTextField(url, { url = it }, label = { Text(if (type == "wms") "URL base do WMS" else "Modelo de URL") }, modifier = Modifier.fillMaxWidth())
-            Text(when (type) {
-                "wms" -> "Ex.: https://servidor/geoserver/wms — o app monta GetMap em EPSG:3857."
-                "wmts" -> "Use {TileMatrix}, {TileCol} e {TileRow} (ou {z}/{x}/{y}) no modelo REST, com matriz GoogleMapsCompatible/EPSG:3857."
-                else -> "Ex.: https://servidor/tiles/{z}/{x}/{y}.png — também aceita {s}, {-y} e {quadkey}."
-            }, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-            if (type == "wms") OutlinedTextField(layers, { layers = it }, label = { Text("Camadas (LAYERS)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            NumField("Zoom máximo", maxZ) { maxZ = it }
-            Row(verticalAlignment = Alignment.CenterVertically) { Switch(overlay, { overlay = it }); Spacer(Modifier.width(8.dp)); Text("Sobreposição (por cima da base)") }
-            if (overlay) { Text("Opacidade: ${(opacity * 100).toInt()}%"); Slider(opacity, { opacity = it }) }
-            Row(verticalAlignment = Alignment.CenterVertically) { Switch(offline, { offline = it }); Spacer(Modifier.width(8.dp)); Text("Permitir download offline") }
-            Text("Ative o download somente se os termos do servidor permitirem.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-        }
-    }
-}
-
-// ====================================================================== GNSS externo
-
-@Composable
-fun GnssScreen(vm: MainViewModel) {
-    val ctx = LocalContext.current
-    val s by vm.settings.collectAsStateWithLifecycle()
-    val status by vm.hub.status.collectAsStateWithLifecycle()
-    val fix by vm.fix.collectAsStateWithLifecycle()
-    var devices by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
-    val hasPerm = Build.VERSION.SDK_INT < 31 || ContextCompat.checkSelfPermission(ctx, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
-    val perm = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { ok -> if (ok) devices = BluetoothGnss.paired(ctx) }
-    LaunchedEffect(hasPerm) { if (hasPerm) devices = BluetoothGnss.paired(ctx) }
-    FullScreen("GNSS externo (Bluetooth)", { vm.screen.value = Screen.NONE }) {
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-            Text("Use receptores GNSS de precisão ou RTK que enviam NMEA 0183 por Bluetooth (perfil serial). Pareie o receptor nas configurações do Android antes.",
-                style = MaterialTheme.typography.bodySmall)
-            Gap()
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(s.gnssSource == "internal", { vm.app.settings.update { it.copy(gnssSource = "internal") } }); Text("GPS interno do aparelho")
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(s.gnssSource == "bt", {
-                    if (s.btAddress.isEmpty()) vm.toast("Escolha um receptor na lista") else vm.app.settings.update { it.copy(gnssSource = "bt") }
-                }); Text("Receptor externo: ${s.btName.ifEmpty { "nenhum" }}")
-            }
-            Gap()
-            Text("Status: $status", fontWeight = FontWeight.SemiBold)
-            fix?.let { Text("Fonte: ${it.source}${it.quality?.let { q -> " · $q" } ?: ""} · precisão ${it.accuracy?.let { a -> "±%.2f m".format(Locale.US, a) } ?: "—"}") }
-            SectionTitle("Receptores pareados")
-            if (!hasPerm) Button(onClick = { perm.launch(Manifest.permission.BLUETOOTH_CONNECT) }) { Text("Permitir Bluetooth") }
-            if (hasPerm && devices.isEmpty()) Text("Nenhum dispositivo pareado.")
-            for ((name, addr) in devices) Row(Modifier.fillMaxWidth().clickable {
-                vm.app.settings.update { it.copy(btAddress = addr, btName = name, gnssSource = "bt") }
-                vm.toast("Usando $name")
-            }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                RadioButton(s.btAddress == addr, null)
-                Column { Text(name); Text(addr, style = MaterialTheme.typography.labelSmall, color = Color.Gray) }
-            }
-            TextButton(onClick = { if (hasPerm) devices = BluetoothGnss.paired(ctx) }) { Text("Atualizar lista") }
         }
     }
 }
@@ -571,7 +461,7 @@ fun AboutScreen(vm: MainViewModel) {
             SectionTitle("Bibliotecas")
             Text("MapLibre Native (BSD), JTS Topology Suite (EPL/EDL), AndroidX e Jetpack Compose (Apache 2.0).", style = MaterialTheme.typography.bodySmall)
             SectionTitle("Dicas")
-            Text("• Toque longo no mapa cria um ponto ali.\n• Na edição de vértices, toque num vértice e depois no mapa para movê-lo; círculos brancos inserem vértices.\n• Toque num atributo do ponto para copiá-lo.\n• Toque na coordenada (canto superior direito) para abrir o conversor.",
+            Text("• Toque longo no mapa cria um ponto ali.\n• Na edição de vértices escolha Mover, Inserir ou Excluir; o toque no mapa (ou a mira com \"+ Centro\") funciona como na criação de trilhas.\n• Para mesclar, toque em \"Mesclar\" numa trilha e depois nas outras trilhas no mapa.\n• Toque num atributo do ponto para copiá-lo.\n• Toque na coordenada (canto superior direito) para abrir o conversor.",
                 style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(16.dp))
             Box(Modifier.size(1.dp))

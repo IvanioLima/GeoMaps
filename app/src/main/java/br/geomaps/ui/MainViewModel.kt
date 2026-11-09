@@ -25,7 +25,6 @@ import br.geomaps.core.Profile
 import br.geomaps.core.Project
 import br.geomaps.core.TrackOps
 import br.geomaps.data.Backup
-import br.geomaps.data.Db
 import br.geomaps.data.Settings
 import br.geomaps.location.Fix
 import br.geomaps.location.TrackRecordingService
@@ -40,6 +39,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -69,7 +69,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val busy = MutableStateFlow<String?>(null)
     val profile = MutableStateFlow<ProfileState?>(null)
     val nav = MutableStateFlow<NavState?>(null)
-    val customSources = MutableStateFlow<List<Db.CustomSource>>(emptyList())
     val exportRequest = MutableStateFlow<ExportRequest?>(null)
     val canUndo = MutableStateFlow(false)
     val canRedo = MutableStateFlow(false)
@@ -94,7 +93,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (settings.value.activeProjectId == 0L || repo.projects().none { it.id == settings.value.activeProjectId }) {
                 app.settings.update { it.copy(activeProjectId = pid) }
             }
-            customSources.value = app.db.customSources()
             if (recorder.state.value.active.not() && recorder.restore()) {
                 message.value = "Gravação anterior recuperada (pausada). Toque em Continuar ou Concluir."
             }
@@ -134,7 +132,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         viewModelScope.launch {
-            combine(settings.map { Triple(it.baseMap, it.overlays, it.googleKeyEffective + "|" + it.arcgisKey) }.distinctUntilChanged(), offline.areas, customSources) { a, b, c -> Triple(a, b, c) }
+            combine(settings.map { it.baseMap to (it.googleKeyEffective + "|" + it.arcgisKey) }.distinctUntilChanged(), offline.areas) { a, b -> a to b }
                 .collect { applyBase() }
         }
         viewModelScope.launch { offline.messages.collect { m -> if (m != null) { message.value = m; offline.consumeMessage() } } }
@@ -144,6 +142,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val u = app.updater
             if (u.shouldAutoCheck() && u.online() && !recorder.state.value.active) checkUpdate(manual = false)
         }
+        // Abre o mapa no último ponto visto (e salva a câmera sempre que o mapa para de mover)
+        val savedCam = loadCamera()
+        savedCam?.let { map.initialCamera = it }
+        // Primeiro uso (sem posição salva): centraliza uma vez na primeira posição do GPS
+        if (savedCam == null) viewModelScope.launch {
+            val f = fix.first { it != null }!!
+            if (follow.value == FollowMode.OFF) map.flyTo(f.lat, f.lon, 16.0)
+        }
+        map.onCameraIdle = { c -> saveCamera(c) }
         map.onClick = { lat, lon, x, y -> onMapClick(lat, lon, x, y) }
         map.onLongClick = { lat, lon -> onLongPress(lat, lon) }
         map.onUserGesture = { if (follow.value != FollowMode.OFF) follow.value = FollowMode.OFF }
@@ -160,6 +167,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toast(s: String) { message.value = s }
+
+    private fun loadCamera(): br.geomaps.map.CameraInfo? {
+        val p = app.settings.getString("camera")?.split(';')?.mapNotNull { it.toDoubleOrNull() } ?: return null
+        if (p.size < 3 || p[0] !in -90.0..90.0 || p[1] !in -180.0..180.0) return null
+        return br.geomaps.map.CameraInfo(p[0], p[1], p[2].coerceIn(2.0, 22.0), p.getOrElse(3) { 0.0 })
+    }
+
+    private fun saveCamera(c: br.geomaps.map.CameraInfo) {
+        if (c.lat == 0.0 && c.lon == 0.0) return
+        app.settings.putString("camera", String.format(Locale.US, "%.7f;%.7f;%.2f;%.1f", c.lat, c.lon, c.zoom, c.bearing))
+    }
 
     // ------------------------------------------------------------------ atualização do app
 
@@ -209,8 +227,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ------------------------------------------------------------------ base cartográfica
 
-    fun allBases(): List<BaseMap> = BaseMaps.builtIn + customSources.value.filter { !it.overlay }.map { BaseMaps.custom(it) }
-    fun overlayBases(): List<BaseMap> = customSources.value.filter { it.overlay }.map { BaseMaps.custom(it) }
+    fun allBases(): List<BaseMap> = BaseMaps.builtIn
 
     private var baseJob: Job? = null
 
@@ -220,7 +237,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val s = settings.value
             val base = allBases().firstOrNull { it.id == s.baseMap } ?: BaseMaps.builtIn.first { it.id == "osm" }
             if (map.map == null) return@launch
-            val overlays = overlayBases().filter { it.id in s.overlays }
+            val overlays = emptyList<BaseMap>()
             if (base.styleUrl != null) {
                 map.setStyleUrl(base.styleUrl)
                 return@launch
@@ -253,7 +270,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setBase(id: String) = app.settings.update { it.copy(baseMap = id) }
-    fun toggleOverlay(id: String) = app.settings.update { s -> s.copy(overlays = if (id in s.overlays) s.overlays - id else s.overlays + id) }
 
     // ------------------------------------------------------------------ toques no mapa
 
@@ -267,26 +283,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is Mode.Draw -> mode.value = m.copy(pts = m.pts + snap(lat, lon))
             is Mode.Measure -> mode.value = m.copy(pts = m.pts + snap(lat, lon))
             is Mode.EditVertices -> {
-                val h = map.drawHandleAt(x, y)
+                val h = map.drawHandleAt(x, y)?.takeIf { it.first == "v" }?.second
                 when {
-                    h != null && h.first == "v" -> {
-                        val i = h.second
-                        mode.value = if (m.rangeMode && m.selected.size == 1) {
-                            val a = m.selected.first()
-                            m.copy(selected = (minOf(a, i)..maxOf(a, i)).toSet(), rangeMode = false)
-                        } else if (m.selected == setOf(i)) m.copy(selected = emptySet()) else m.copy(selected = setOf(i))
-                    }
-                    h != null && h.first == "m" -> {
-                        val i = h.second
-                        val a = m.pts[i]; val b = m.pts[(i + 1) % m.pts.size]
-                        val mid = Coord((a.lat + b.lat) / 2, (a.lon + b.lon) / 2, if (a.ele != null && b.ele != null) (a.ele + b.ele) / 2 else null)
-                        mode.value = m.copy(pts = TrackOps.insertVertex(m.pts, i + 1, mid), selected = setOf(i + 1))
-                    }
-                    m.selected.size == 1 -> {
-                        // move o vértice selecionado para o ponto tocado
-                        val i = m.selected.first()
-                        mode.value = m.copy(pts = TrackOps.moveVertex(m.pts, i, snap(lat, lon, exclude = m.featureId)))
-                    }
+                    m.isPoint -> vertexApply(m, snap(lat, lon, exclude = m.featureId))
+                    m.tool == VertexTool.MOVE && h != null ->
+                        mode.value = m.copy(selected = if (m.selected == setOf(h)) emptySet() else setOf(h))
+                    m.tool == VertexTool.DELETE -> if (h != null) vertexDeleteAt(m, h) else toast("Toque no vértice que deseja excluir")
+                    else -> vertexApply(m, snap(lat, lon, exclude = m.featureId))
+                }
+            }
+            is Mode.MergeSelect -> {
+                val id = map.featureAt(x, y)
+                val f = features.value.firstOrNull { it.id == id }
+                when {
+                    f == null -> toast("Toque sobre uma trilha")
+                    f.type != GeomType.LINE -> toast("Somente trilhas podem ser mescladas")
+                    f.id in m.order -> mode.value = m.copy(order = m.order - f.id)
+                    else -> mode.value = m.copy(order = m.order + f.id)
                 }
             }
             is Mode.Split -> {
@@ -339,12 +352,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         map.setDraw(emptyList(), false); map.setMeasure(emptyList(), false); map.setAreaPreview(null)
         when (m) {
             is Mode.Draw -> map.setDraw(m.pts, m.type == GeomType.POLYGON)
-            is Mode.EditVertices -> map.setDraw(m.pts, m.closed, m.selected, midpoints = !m.isPoint)
+            is Mode.EditVertices -> map.setDraw(m.pts, m.closed, m.selected)
             is Mode.Measure -> map.setMeasure(m.pts, m.area)
             is Mode.Split -> map.setDraw(m.pts, false, m.cuts)
             is Mode.PickArea -> map.setAreaPreview(pickRing(m))
             else -> {}
         }
+        if (m is Mode.MergeSelect) map.setHighlight(m.order.mapNotNull { id -> features.value.firstOrNull { it.id == id } })
+        else map.setSelection(selected.value)
     }
 
     fun pickRing(m: Mode.PickArea): List<Coord>? {
@@ -606,6 +621,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is Mode.Draw -> mode.value = m.copy(pts = m.pts + snap(c.lat, c.lon))
             is Mode.Measure -> mode.value = m.copy(pts = m.pts + snap(c.lat, c.lon))
             is Mode.PickArea -> onMapClickCoord(c)
+            is Mode.EditVertices -> vertexApply(m, snap(c.lat, c.lon, exclude = m.featureId))
             else -> {}
         }
     }
@@ -618,10 +634,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun drawAddCoord(c: Coord) {
         when (val m = mode.value) {
             is Mode.Draw -> mode.value = m.copy(pts = m.pts + c.copy(ele = c.ele ?: app.dem.sample(c.lat, c.lon)))
-            is Mode.EditVertices -> {
-                val idx = m.selected.maxOrNull()?.plus(1) ?: m.pts.size
-                mode.value = if (m.isPoint) m.copy(pts = listOf(c)) else m.copy(pts = TrackOps.insertVertex(m.pts, idx, c), selected = setOf(idx))
-            }
+            is Mode.EditVertices -> vertexApply(m, c.copy(ele = c.ele ?: app.dem.sample(c.lat, c.lon)))
             is Mode.Measure -> mode.value = m.copy(pts = m.pts + c)
             else -> {}
         }
@@ -633,6 +646,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is Mode.Draw -> mode.value = m.copy(pts = m.pts.dropLast(1))
             is Mode.Measure -> mode.value = m.copy(pts = m.pts.dropLast(1))
             is Mode.PickArea -> mode.value = m.copy(pts = m.pts.dropLast(1))
+            is Mode.EditVertices -> vertexUndo()
             else -> {}
         }
     }
@@ -662,53 +676,81 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is Geom.Line -> Mode.EditVertices(id, 0, g.parts[0], false)
             is Geom.Poly -> Mode.EditVertices(id, 0, g.outer, true)
         }
-        toast(if (f.geom is Geom.Pt) "Toque no mapa para mover o ponto" else "Toque num vértice para selecionar; toque no mapa para movê-lo; círculos brancos inserem vértices")
+        toast(if (f.geom is Geom.Pt) "Toque no mapa (ou use a mira e \"+ Centro\") para mover o ponto" else VERTEX_HINT[VertexTool.MOVE]!!)
+    }
+
+    private val VERTEX_HINT = mapOf(
+        VertexTool.MOVE to "Toque no vértice a mover e depois no novo local (ou use a mira e \"+ Centro\")",
+        VertexTool.INSERT to "Toque no mapa (ou use a mira e \"+ Centro\") para inserir vértices no trecho mais próximo",
+        VertexTool.DELETE to "Toque nos vértices que deseja excluir",
+    )
+
+    fun setVertexTool(t: VertexTool) {
+        val m = mode.value as? Mode.EditVertices ?: return
+        mode.value = m.copy(tool = t, selected = if (t == VertexTool.MOVE) m.selected else emptySet())
+        toast(VERTEX_HINT[t]!!)
+    }
+
+    /** Registra o novo estado da geometria em edição, guardando o anterior para "Desfazer". */
+    private fun vertexPush(m: Mode.EditVertices, pts: List<Coord>, selected: Set<Int>) {
+        mode.value = m.copy(pts = pts, selected = selected, history = (m.history + listOf(m.pts)).takeLast(100))
+    }
+
+    /** Aplica a ferramenta ativa numa coordenada (toque, centro da mira ou coordenada digitada). */
+    private fun vertexApply(m: Mode.EditVertices, c: Coord) {
+        if (m.isPoint) { vertexPush(m, listOf(c), setOf(0)); return }
+        when (m.tool) {
+            VertexTool.MOVE -> {
+                val i = m.selected.singleOrNull() ?: run { toast("Primeiro toque no vértice que deseja mover"); return }
+                vertexPush(m, TrackOps.moveVertex(m.pts, i, c), setOf(i))
+            }
+            VertexTool.INSERT -> {
+                val idx = insertIndex(m, c)
+                vertexPush(m, TrackOps.insertVertex(m.pts, idx, c), setOf(idx))
+            }
+            VertexTool.DELETE -> toast("Toque diretamente no vértice que deseja excluir")
+        }
+    }
+
+    /** Posição de inserção: no trecho mais próximo; nas pontas de uma trilha, estende a linha. */
+    private fun insertIndex(m: Mode.EditVertices, c: Coord): Int {
+        if (m.pts.size < 2) return m.pts.size
+        val ring = if (m.closed) m.pts + m.pts.first() else m.pts
+        val n = GeoMath.nearestOnLine(c, listOf(ring)) ?: return m.pts.size
+        if (!m.closed) {
+            if (n.segIndex == 0 && n.t <= 0.0) return 0
+            if (n.segIndex == ring.size - 2 && n.t >= 1.0) return m.pts.size
+        }
+        return n.segIndex + 1
+    }
+
+    private fun vertexDeleteAt(m: Mode.EditVertices, i: Int) {
+        val min = if (m.closed) 3 else 2
+        if (m.pts.size <= min) { toast("A geometria precisa de pelo menos $min vértices"); return }
+        vertexPush(m, TrackOps.deleteVertices(m.pts, setOf(i)), emptySet())
+    }
+
+    fun vertexUndo() {
+        val m = mode.value as? Mode.EditVertices ?: return
+        val prev = m.history.lastOrNull() ?: run { toast("Nada para desfazer"); return }
+        mode.value = m.copy(pts = prev, selected = emptySet(), history = m.history.dropLast(1))
+    }
+
+    /** Quantidade de segmentos (partes) do elemento em edição. */
+    fun editPartCount(m: Mode.EditVertices): Int = when (val g = features.value.firstOrNull { it.id == m.featureId }?.geom) {
+        is Geom.Line -> g.parts.size
+        is Geom.Poly -> g.polys.sumOf { it.size }
+        else -> 1
     }
 
     fun editNextPart() {
         val m = mode.value as? Mode.EditVertices ?: return
         val f = features.value.firstOrNull { it.id == m.featureId } ?: return
         val parts: List<List<Coord>> = when (val g = f.geom) { is Geom.Line -> g.parts; is Geom.Poly -> g.polys.flatten(); else -> return }
-        if (parts.size < 2) { toast("Este elemento tem um único segmento"); return }
+        if (parts.size < 2) return
         commitVertices(keepEditing = true)
         val next = (m.part + 1) % parts.size
-        mode.value = m.copy(part = next, pts = parts[next], selected = emptySet())
-    }
-
-    fun vertexMoveToCenter() {
-        val m = mode.value as? Mode.EditVertices ?: return
-        val i = m.selected.singleOrNull() ?: run { toast("Selecione um vértice"); return }
-        val c = map.center()
-        mode.value = m.copy(pts = TrackOps.moveVertex(m.pts, i, snap(c.lat, c.lon, m.featureId)))
-    }
-
-    fun vertexInsertAtCenter() {
-        val m = mode.value as? Mode.EditVertices ?: return
-        if (m.isPoint) return vertexMoveToCenter()
-        val c = map.center()
-        val idx = m.selected.maxOrNull()?.plus(1) ?: m.pts.size
-        mode.value = m.copy(pts = TrackOps.insertVertex(m.pts, idx, snap(c.lat, c.lon, m.featureId)), selected = setOf(idx))
-    }
-
-    fun vertexDelete() {
-        val m = mode.value as? Mode.EditVertices ?: return
-        if (m.selected.isEmpty()) { toast("Selecione um ou mais vértices"); return }
-        val min = if (m.closed) 3 else 2
-        val rest = TrackOps.deleteVertices(m.pts, m.selected)
-        if (rest.size < min) { toast("A geometria precisa de pelo menos $min vértices"); return }
-        mode.value = m.copy(pts = rest, selected = emptySet())
-    }
-
-    fun vertexRange() {
-        val m = mode.value as? Mode.EditVertices ?: return
-        if (m.selected.size != 1) { toast("Selecione o primeiro vértice e depois toque em Intervalo"); return }
-        mode.value = m.copy(rangeMode = true)
-        toast("Agora toque no último vértice do intervalo")
-    }
-
-    fun vertexSelectAll() {
-        val m = mode.value as? Mode.EditVertices ?: return
-        mode.value = m.copy(selected = if (m.selected.size == m.pts.size) emptySet() else m.pts.indices.toSet())
+        mode.value = m.copy(part = next, pts = parts[next], selected = emptySet(), history = emptyList())
     }
 
     fun commitVertices(keepEditing: Boolean = false) {
@@ -748,6 +790,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (ng.parts.isEmpty()) { toast("O filtro removeria todos os pontos"); return }
         commit("Filtrar ${f.name}", listOf(f), listOf(f.copy(geom = ng)))
         toast("Pontos: ${g.allCoords().size} → ${ng.allCoords().size}")
+    }
+
+    fun startMergeSelect(order: List<Long>) {
+        selectedId.value = null
+        profile.value = null
+        dialog.value = null
+        mode.value = Mode.MergeSelect(order)
+        toast("Toque nas trilhas que deseja mesclar, na ordem desejada")
+    }
+
+    fun confirmMergeSelect() {
+        val m = mode.value as? Mode.MergeSelect ?: return
+        if (m.order.size < 2) { toast("Selecione pelo menos duas trilhas"); return }
+        mode.value = Mode.Browse
+        dialog.value = Dialog.Merge(m.order.first(), m.order)
     }
 
     fun merge(baseId: Long, items: List<Pair<Long, Boolean>>, connect: Boolean, keepOriginals: Boolean) {
@@ -972,19 +1029,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         screen.value = Screen.OFFLINE
         toast("Download iniciado")
-    }
-
-    // ------------------------------------------------------------------ fontes personalizadas
-
-    fun saveCustomSource(s: Db.CustomSource) = io {
-        app.db.saveCustomSource(s)
-        customSources.value = app.db.customSources()
-    }
-
-    fun deleteCustomSource(id: Long) = io {
-        app.db.deleteCustomSource(id)
-        customSources.value = app.db.customSources()
-        if (settings.value.baseMap == "c_$id") app.settings.update { it.copy(baseMap = "osm") }
     }
 
     // ------------------------------------------------------------------ mão livre

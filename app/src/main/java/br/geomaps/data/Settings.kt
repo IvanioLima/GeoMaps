@@ -34,12 +34,7 @@ data class Settings(
     val googleKey: String = "",
     val arcgisKey: String = "",
     val baseMap: String = "g_sat",
-    val overlays: Set<String> = emptySet(),
     val labels: Boolean = true,
-    /** "internal" ou "bt" */
-    val gnssSource: String = "internal",
-    val btAddress: String = "",
-    val btName: String = "",
     val deviationAlertM: Int = 30,
     val recMaxAccuracyM: Int = 50,
     val autoBackup: Boolean = false,
@@ -89,11 +84,7 @@ class SettingsStore(context: Context) {
             googleKey = sp.getString("googleKey", "")!!,
             arcgisKey = sp.getString("arcgisKey", "")!!,
             baseMap = sp.getString("baseMap", d.baseMap)!!,
-            overlays = sp.getStringSet("overlays", emptySet())!!.toSet(),
             labels = sp.getBoolean("labels", d.labels),
-            gnssSource = sp.getString("gnssSource", d.gnssSource)!!,
-            btAddress = sp.getString("btAddress", "")!!,
-            btName = sp.getString("btName", "")!!,
             deviationAlertM = sp.getInt("deviationAlertM", d.deviationAlertM),
             recMaxAccuracyM = sp.getInt("recMaxAccuracyM", d.recMaxAccuracyM),
             autoBackup = sp.getBoolean("autoBackup", d.autoBackup),
@@ -122,11 +113,7 @@ class SettingsStore(context: Context) {
             .putString("googleKey", s.googleKey.trim())
             .putString("arcgisKey", s.arcgisKey.trim())
             .putString("baseMap", s.baseMap)
-            .putStringSet("overlays", s.overlays)
             .putBoolean("labels", s.labels)
-            .putString("gnssSource", s.gnssSource)
-            .putString("btAddress", s.btAddress)
-            .putString("btName", s.btName)
             .putInt("deviationAlertM", s.deviationAlertM)
             .putInt("recMaxAccuracyM", s.recMaxAccuracyM)
             .putBoolean("autoBackup", s.autoBackup)
