@@ -1,4 +1,4 @@
-name: Compilar APK
+name: Compilar e publicar
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
   issues: write
 
 concurrency:
@@ -16,6 +16,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      PLAY_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,27 +30,35 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: Compilar (debug)
-        run: gradle assembleDebug --no-daemon --stacktrace 2>&1 | tee build.log
+      # AAB para o Google Play + APK (mesma assinatura) para instalar à mão, se precisar
+      - name: Compilar (release)
+        run: gradle bundleRelease assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
 
-      - name: Renomear APK
+      - name: Separar arquivos
         if: success()
-        run: cp app/build/outputs/apk/debug/app-debug.apk GeoMaps.apk
+        run: |
+          cp app/build/outputs/bundle/release/app-release.aab GeoMaps.aab
+          cp app/build/outputs/apk/release/app-release.apk GeoMaps.apk
 
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: GeoMaps-apk
-          path: GeoMaps.apk
+          name: GeoMaps-${{ github.run_number }}
+          path: |
+            GeoMaps.aab
+            GeoMaps.apk
 
-      - name: Publicar versão (release) com o APK
-        if: success()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="build-${{ github.run_number }}"
-          gh release create "$TAG" GeoMaps.apk --title "GeoMaps build ${{ github.run_number }}" \
-            --notes "APK gerado automaticamente a partir de ${GITHUB_SHA::7}. Instale o arquivo GeoMaps.apk no Android." || true
+      # Envia para o teste interno do Google Play (só depois de criar o segredo PLAY_SERVICE_ACCOUNT
+      # e de fazer o primeiro envio manual na Play Console)
+      - name: Enviar ao Google Play (teste interno)
+        if: success() && env.PLAY_JSON != ''
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT }}
+          packageName: br.geomaps.app
+          releaseFiles: GeoMaps.aab
+          track: internal
+          status: completed
 
       - name: Relatório da compilação (issue "Relatório de compilação")
         if: always()
@@ -59,7 +69,7 @@ jobs:
           if [ -z "$NUM" ]; then
             NUM=$(gh issue create --title "Relatório de compilação" --body "Resultados automáticos do GitHub Actions." | grep -oE '[0-9]+$')
           fi
-          if [ -f GeoMaps.apk ]; then
+          if [ -f GeoMaps.aab ]; then
             STATUS="✅ SUCESSO"
           else
             STATUS="❌ FALHA"
@@ -67,7 +77,7 @@ jobs:
           {
             echo "## $STATUS — build ${{ github.run_number }} (${GITHUB_SHA::7})"
             echo
-            if [ ! -f GeoMaps.apk ] && [ -f build.log ]; then
+            if [ ! -f GeoMaps.aab ] && [ -f build.log ]; then
               echo '```'
               grep -E "^e: |error:|What went wrong|Could not|FAILURE|> Task .* FAILED|Execution failed|Unresolved|AAPT|resource .* not found" build.log | head -150 | cut -c1-400
               echo '```'
