@@ -25,7 +25,7 @@ class GeoMapsApp : Application() {
     lateinit var recorder: TrackRecorder
     lateinit var dem: DemManager
     lateinit var offline: OfflineStore
-    lateinit var updater: br.geomaps.data.Updater
+    lateinit var sync: br.geomaps.data.SyncManager
 
     override fun onCreate() {
         super.onCreate()
@@ -42,7 +42,9 @@ class GeoMapsApp : Application() {
         dem = DemManager(this, settings)
         offline = OfflineStore(this, db, settings, dem)
         offline.configureAmbientCache()
-        updater = br.geomaps.data.Updater(this, settings)
+        sync = br.geomaps.data.SyncManager(this)
+        // toda alteração local agenda o envio ao Google Drive (se a sincronização estiver ligada)
+        repo.onChanged = { sync.onLocalChange() }
         runCatching { Backup.schedule(this, settings.value.autoBackup) }
     }
 }

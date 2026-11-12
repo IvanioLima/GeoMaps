@@ -106,6 +106,10 @@ data class Project(
     val created: Long = System.currentTimeMillis(),
     val updated: Long = System.currentTimeMillis(),
     val featureCount: Int = 0,
+    /** Está no Google Drive (já sincronizado ao menos uma vez). */
+    val inCloud: Boolean = false,
+    /** Tem alterações locais ainda não enviadas. */
+    val pendingSync: Boolean = false,
 )
 
 enum class FieldType(val label: String) {

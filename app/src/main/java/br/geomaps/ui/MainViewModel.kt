@@ -74,7 +74,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val canRedo = MutableStateFlow(false)
     val heading = MutableStateFlow<Float?>(null)
     val freehandColor = MutableStateFlow(0xFFE53935.toInt())
-    val update = MutableStateFlow<UpdateState?>(null)
 
     val fix: StateFlow<Fix?> = hub.fix
     val selected: StateFlow<GeoFeature?> = combine(features, selectedId) { fs, id -> fs.firstOrNull { it.id == id } }
@@ -136,11 +135,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .collect { applyBase() }
         }
         viewModelScope.launch { offline.messages.collect { m -> if (m != null) { message.value = m; offline.consumeMessage() } } }
-        // Verificação automática de atualização (no máximo 1x por dia, só com internet e fora de gravação)
+        // Dados vindos do Drive trocam os ids dos elementos: o desfazer/refazer anterior deixa de valer
         viewModelScope.launch {
-            delay(6000)
-            val u = app.updater
-            if (u.shouldAutoCheck() && u.online() && !recorder.state.value.active) checkUpdate(manual = false)
+            app.sync.remoteApplied.collect { n ->
+                if (n > 0) { undoStack.clear(); redoStack.clear(); canUndo.value = false; canRedo.value = false }
+            }
         }
         // Abre o mapa no último ponto visto (e salva a câmera sempre que o mapa para de mover)
         val savedCam = loadCamera()
@@ -179,51 +178,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         app.settings.putString("camera", String.format(Locale.US, "%.7f;%.7f;%.2f;%.1f", c.lat, c.lon, c.zoom, c.bearing))
     }
 
-    // ------------------------------------------------------------------ atualização do app
+    // ------------------------------------------------------------------ sincronização (Google Drive)
 
-    fun checkUpdate(manual: Boolean) {
-        viewModelScope.launch {
-            if (manual) busy.value = "Verificando atualizações…"
-            val r = withContext(Dispatchers.IO) { runCatching { app.updater.check(ignoreSkipped = manual) } }
-            busy.value = null
-            r.onSuccess { info ->
-                if (info != null) {
-                    // nunca interrompe uma gravação: o aviso aparece depois
-                    if (!manual && recorder.state.value.active) return@onSuccess
-                    update.value = UpdateState(info)
-                } else if (manual) toast("O GeoMaps está atualizado (versão ${app.updater.currentName})")
-            }.onFailure { if (manual) toast("Não foi possível verificar: ${it.message ?: "sem conexão"}") }
-        }
+    val syncState get() = app.sync.state
+
+    fun syncNow() {
+        if (!app.sync.enabled) { toast("Conecte uma conta Google em Configurações → Sincronização"); return }
+        app.sync.requestSync()
+        toast("Sincronizando com o Google Drive…")
     }
 
-    fun skipUpdate() {
-        update.value?.let { app.updater.skip(it.info) }
-        update.value = null
-    }
-
-    fun downloadUpdate() {
-        val st = update.value ?: return
-        if (st.progress != null && st.apk == null && st.error == null) return
-        update.value = st.copy(progress = 0f, error = null)
-        viewModelScope.launch {
-            val r = withContext(Dispatchers.IO) {
-                runCatching { app.updater.download(st.info) { p -> update.value = update.value?.copy(progress = p) } }
+    /** Pede a autorização do Google (abre a tela de consentimento se precisar). */
+    fun startSyncSignIn(launch: (android.app.PendingIntent) -> Unit) {
+        com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(app)
+            .authorize(br.geomaps.data.DriveAuth.request(null))
+            .addOnSuccessListener { r ->
+                val pi = r.pendingIntent
+                if (r.hasResolution() && pi != null) launch(pi) else finishSyncSignIn(r.accessToken, r)
             }
-            r.onSuccess { f -> update.value = update.value?.copy(apk = f, progress = 1f); installUpdate() }
-                .onFailure { update.value = update.value?.copy(error = it.message ?: "Falha no download", progress = null) }
+            .addOnFailureListener { toast("Não foi possível conectar ao Google: ${it.message}") }
+    }
+
+    fun onSyncAuthResult(data: Intent?) {
+        runCatching {
+            val r = com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(app).getAuthorizationResultFromIntent(data)
+            finishSyncSignIn(r.accessToken, r)
+        }.onFailure { toast("Autorização cancelada") }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun finishSyncSignIn(token: String?, r: com.google.android.gms.auth.api.identity.AuthorizationResult) {
+        if (token == null) { toast("Autorização não concedida"); return }
+        io("Conectando ao Google Drive…") {
+            val email = br.geomaps.data.DriveApi(token).email() ?: r.toGoogleSignInAccount()?.email
+                ?: throw IllegalStateException("Não foi possível identificar a conta")
+            app.sync.connected(email)
+            message.value = "Sincronização ligada: $email"
         }
     }
 
-    fun installUpdate() {
-        val apk = update.value?.apk ?: return
-        val u = app.updater
-        runCatching {
-            if (!u.canInstall()) {
-                toast("Permita que o GeoMaps instale atualizações e toque em Instalar de novo")
-                app.startActivity(u.installPermissionIntent().addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            } else app.startActivity(u.installIntent(apk))
-        }.onFailure { update.value = update.value?.copy(error = "Não foi possível abrir o instalador: ${it.message}") }
-    }
+    fun disconnectSync() { app.sync.disconnect(); toast("Sincronização desligada") }
+
+    /** Abre a atualização do Google Play (definido pela MainActivity). */
+    var playUpdateCheck: ((manual: Boolean) -> Unit)? = null
 
     // ------------------------------------------------------------------ base cartográfica
 

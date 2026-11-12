@@ -14,7 +14,7 @@ import br.geomaps.core.jArr
 import br.geomaps.core.jObj
 
 /** Banco interno (SQLite). Geometrias, estilos e atributos são guardados em JSON compacto. */
-class Db(context: Context) : SQLiteOpenHelper(context, "geomaps.db", null, 1) {
+class Db(context: Context) : SQLiteOpenHelper(context, "geomaps.db", null, 2) {
 
     override fun onConfigure(db: SQLiteDatabase) {
         db.setForeignKeyConstraintsEnabled(true)
@@ -57,22 +57,141 @@ class Db(context: Context) : SQLiteOpenHelper(context, "geomaps.db", null, 1) {
                 overlay INTEGER DEFAULT 0, opacity REAL DEFAULT 1, allow_offline INTEGER DEFAULT 0)"""
         )
         db.execSQL("CREATE TABLE rec_points(id INTEGER PRIMARY KEY AUTOINCREMENT, seg INTEGER, lat REAL, lon REAL, ele REAL, time INTEGER, acc REAL)")
+        onUpgrade(db, 1, 2)
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            // v2 (1.1): sincronização por projeto com o Google Drive.
+            // uid: identificador global do projeto (igual em todos os aparelhos); dirty: há alterações locais
+            // ainda não enviadas; drive_id/rev: arquivo no Drive e versão dele na última sincronização.
+            db.execSQL("ALTER TABLE projects ADD COLUMN uid TEXT")
+            db.execSQL("ALTER TABLE projects ADD COLUMN dirty INTEGER DEFAULT 1")
+            db.execSQL("ALTER TABLE projects ADD COLUMN drive_id TEXT")
+            db.execSQL("ALTER TABLE projects ADD COLUMN rev INTEGER")
+            // contador de edições: evita marcar como enviado um projeto alterado durante o envio
+            db.execSQL("ALTER TABLE projects ADD COLUMN edit_seq INTEGER DEFAULT 0")
+            db.execSQL("UPDATE projects SET uid = lower(hex(randomblob(16))), dirty = 1 WHERE uid IS NULL")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_uid ON projects(uid)")
+            // Projetos excluídos que já estavam no Drive (para apagar lá também)
+            db.execSQL("CREATE TABLE IF NOT EXISTS sync_tombstones(uid TEXT PRIMARY KEY, drive_id TEXT, rev INTEGER, deleted INTEGER)")
+            // Gatilhos: qualquer alteração de conteúdo marca o projeto como pendente de envio
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS trg_proj_uid AFTER INSERT ON projects WHEN NEW.uid IS NULL BEGIN UPDATE projects SET uid = lower(hex(randomblob(16))) WHERE id = NEW.id; END")
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS trg_proj_edit AFTER UPDATE OF name, description, form ON projects " +
+                    "WHEN OLD.name IS NOT NEW.name OR OLD.description IS NOT NEW.description OR OLD.form IS NOT NEW.form " +
+                    "BEGIN UPDATE projects SET dirty = 1, edit_seq = edit_seq + 1 WHERE id = NEW.id; END"
+            )
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS trg_feat_ins AFTER INSERT ON features BEGIN UPDATE projects SET dirty = 1, edit_seq = edit_seq + 1 WHERE id = NEW.project_id; END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS trg_feat_upd AFTER UPDATE ON features BEGIN UPDATE projects SET dirty = 1, edit_seq = edit_seq + 1 WHERE id IN (NEW.project_id, OLD.project_id); END")
+            db.execSQL("CREATE TRIGGER IF NOT EXISTS trg_feat_del AFTER DELETE ON features BEGIN UPDATE projects SET dirty = 1, edit_seq = edit_seq + 1 WHERE id = OLD.project_id; END")
+            db.execSQL(
+                "CREATE TRIGGER IF NOT EXISTS trg_proj_del BEFORE DELETE ON projects WHEN OLD.drive_id IS NOT NULL " +
+                    "BEGIN INSERT OR REPLACE INTO sync_tombstones(uid, drive_id, rev, deleted) VALUES (OLD.uid, OLD.drive_id, OLD.rev, CAST(strftime('%s','now') AS INTEGER) * 1000); END"
+            )
+        }
+    }
+
+    // ------------------------------------------------------------------ sincronização
+
+    /** Estado de sincronização de um projeto. */
+    data class SyncInfo(val id: Long, val uid: String, val name: String, val dirty: Boolean, val driveId: String?, val rev: Long?, val seq: Long)
+
+    fun syncInfos(): List<SyncInfo> {
+        val out = ArrayList<SyncInfo>()
+        readableDatabase.rawQuery("SELECT id, uid, name, dirty, drive_id, rev, edit_seq FROM projects", null).use { c ->
+            while (c.moveToNext()) out += SyncInfo(
+                c.getLong(0), c.getString(1) ?: "", c.getString(2) ?: "", c.getInt(3) == 1,
+                c.getString(4), if (c.isNull(5)) null else c.getLong(5), c.getLong(6),
+            )
+        }
+        return out
+    }
+
+    /** Há algo a enviar (projetos alterados ou excluídos)? */
+    fun hasPendingSync(): Boolean =
+        readableDatabase.rawQuery("SELECT (SELECT COUNT(*) FROM projects WHERE dirty = 1) + (SELECT COUNT(*) FROM sync_tombstones)", null)
+            .use { c -> c.moveToFirst() && c.getInt(0) > 0 }
+
+    /** Marca como enviado; se o projeto foi editado durante o envio ([seq] mudou), continua pendente. */
+    fun markSynced(id: Long, driveId: String, rev: Long, seq: Long) {
+        writableDatabase.execSQL(
+            "UPDATE projects SET drive_id = ?, rev = ?, dirty = CASE WHEN edit_seq = ? THEN 0 ELSE 1 END WHERE id = ?",
+            arrayOf<Any>(driveId, rev, seq, id),
+        )
+    }
+
+    data class Tombstone(val uid: String, val driveId: String, val rev: Long?)
+
+    fun tombstones(): List<Tombstone> {
+        val out = ArrayList<Tombstone>()
+        readableDatabase.rawQuery("SELECT uid, drive_id, rev FROM sync_tombstones", null).use { c ->
+            while (c.moveToNext()) out += Tombstone(c.getString(0), c.getString(1), if (c.isNull(2)) null else c.getLong(2))
+        }
+        return out
+    }
+
+    fun deleteTombstone(uid: String) { writableDatabase.delete("sync_tombstones", "uid=?", arrayOf(uid)) }
+
+    /** Esquece o vínculo com o Drive (troca de conta): tudo volta a ser enviado na próxima sincronização. */
+    fun resetSync() {
+        writableDatabase.execSQL("UPDATE projects SET drive_id = NULL, rev = NULL, dirty = 1")
+        writableDatabase.delete("sync_tombstones", null, null)
+    }
+
+    /** Exclui um projeto que foi apagado em outro aparelho (sem criar marca de exclusão). */
+    fun deleteProjectFromRemote(id: Long) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val uid = db.rawQuery("SELECT uid FROM projects WHERE id=?", arrayOf(id.toString())).use { c -> if (c.moveToFirst()) c.getString(0) else null }
+            db.delete("projects", "id=?", arrayOf(id.toString()))
+            if (uid != null) db.delete("sync_tombstones", "uid=?", arrayOf(uid))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
+
+    /**
+     * Grava a versão do Drive de um projeto: cria (se [localId] for null) ou substitui o conteúdo.
+     * A visibilidade continua sendo uma escolha de cada aparelho. Retorna o id local.
+     */
+    fun applyRemoteProject(localId: Long?, uid: String, p: Project, features: List<GeoFeature>, driveId: String, rev: Long): Long {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val id = if (localId == null) {
+                db.insert("projects", null, ContentValues().apply {
+                    put("uid", uid); put("name", p.name); put("description", p.description); put("visible", 1)
+                    put("form", Codec.formToJson(p.form)); put("created", p.created); put("updated", p.updated)
+                })
+            } else {
+                db.update("projects", ContentValues().apply {
+                    put("name", p.name); put("description", p.description)
+                    put("form", Codec.formToJson(p.form)); put("updated", p.updated)
+                }, "id=?", arrayOf(localId.toString()))
+                db.delete("features", "project_id=?", arrayOf(localId.toString()))
+                localId
+            }
+            for (f in features) db.insert("features", null, values(f.copy(id = 0, projectId = id), keepUpdated = true))
+            db.execSQL("UPDATE projects SET drive_id = ?, rev = ?, dirty = 0 WHERE id = ?", arrayOf<Any>(driveId, rev, id))
+            db.setTransactionSuccessful()
+            return id
+        } finally { db.endTransaction() }
+    }
 
     // ------------------------------------------------------------------ projetos
 
     fun projects(): List<Project> {
         val out = ArrayList<Project>()
         readableDatabase.rawQuery(
-            "SELECT p.id, p.name, p.description, p.visible, p.form, p.created, p.updated, (SELECT COUNT(*) FROM features f WHERE f.project_id = p.id) FROM projects p ORDER BY p.name COLLATE NOCASE",
+            "SELECT p.id, p.name, p.description, p.visible, p.form, p.created, p.updated, (SELECT COUNT(*) FROM features f WHERE f.project_id = p.id), p.drive_id, p.dirty FROM projects p ORDER BY p.name COLLATE NOCASE",
             null,
         ).use { c ->
             while (c.moveToNext()) out += Project(
                 id = c.getLong(0), name = c.getString(1), description = c.getString(2) ?: "",
                 visible = c.getInt(3) == 1, form = Codec.formFromJson(c.getString(4)),
                 created = c.getLong(5), updated = c.getLong(6), featureCount = c.getInt(7),
+                inCloud = !c.isNull(8), pendingSync = c.getInt(9) == 1,
             )
         }
         return out
@@ -124,7 +243,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "geomaps.db", null, 1) {
             if (c.moveToFirst()) featureFrom(c) else null
         }
 
-    private fun values(f: GeoFeature) = ContentValues().apply {
+    private fun values(f: GeoFeature, keepUpdated: Boolean = false) = ContentValues().apply {
         if (f.id > 0) put("id", f.id)
         put("project_id", f.projectId); put("kind", f.type.name); put("name", f.name); put("description", f.description)
         put("category", f.category); put("folder", f.folder); put("geom", Codec.geomToJson(f.geom))
@@ -133,7 +252,7 @@ class Db(context: Context) : SQLiteOpenHelper(context, "geomaps.db", null, 1) {
         val all = f.geom.allCoords()
         put("min_lat", all.minOfOrNull { it.lat }); put("min_lon", all.minOfOrNull { it.lon })
         put("max_lat", all.maxOfOrNull { it.lat }); put("max_lon", all.maxOfOrNull { it.lon })
-        put("created", f.created); put("updated", System.currentTimeMillis())
+        put("created", f.created); put("updated", if (keepUpdated) f.updated else System.currentTimeMillis())
     }
 
     fun insertFeature(f: GeoFeature): Long = writableDatabase.insert("features", null, values(f))

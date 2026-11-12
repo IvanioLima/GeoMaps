@@ -18,6 +18,10 @@ import androidx.lifecycle.lifecycleScope
 import br.geomaps.ui.GeoMapsTheme
 import br.geomaps.ui.MainScreen
 import br.geomaps.ui.MainViewModel
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory
+import com.google.android.play.core.appupdate.AppUpdateOptions
+import com.google.android.play.core.install.model.AppUpdateType
+import com.google.android.play.core.install.model.UpdateAvailability
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -27,6 +31,24 @@ class MainActivity : ComponentActivity() {
         if (res[Manifest.permission.ACCESS_FINE_LOCATION] == true || res[Manifest.permission.ACCESS_COARSE_LOCATION] == true) {
             vm.hub.restart()
         }
+    }
+
+    private val appUpdates by lazy { AppUpdateManagerFactory.create(this) }
+    private val updateLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { }
+
+    /** Atualizações pelo Google Play: avisa e abre a tela de atualização do próprio Play. */
+    private fun checkPlayUpdate(manual: Boolean) {
+        appUpdates.appUpdateInfo.addOnSuccessListener { info ->
+            val avail = info.updateAvailability()
+            when {
+                avail == UpdateAvailability.UPDATE_AVAILABLE && info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE) ||
+                    avail == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS ->
+                    runCatching {
+                        appUpdates.startUpdateFlowForResult(info, updateLauncher, AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build())
+                    }
+                manual -> vm.toast("O GeoMaps está atualizado (versão ${BuildConfig.VERSION_NAME})")
+            }
+        }.addOnFailureListener { if (manual) vm.toast("Atualizações são feitas pelo Google Play (app instalado fora do Play)") }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,6 +65,8 @@ class MainActivity : ComponentActivity() {
         }
         requestPermissions()
         handleIntent(intent)
+        vm.playUpdateCheck = { manual -> checkPlayUpdate(manual) }
+        if (savedInstanceState == null) checkPlayUpdate(manual = false)
         lifecycleScope.launch {
             vm.settings.collect { s ->
                 if (s.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -55,6 +79,23 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         vm.hub.acquire("ui")
         vm.app.compass.acquire()
+        // ao abrir (ou voltar para) o app: busca novidades no Google Drive
+        vm.app.sync.requestSync()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // retoma uma atualização imediata que foi interrompida
+        appUpdates.appUpdateInfo.addOnSuccessListener { info ->
+            if (info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) runCatching {
+                appUpdates.startUpdateFlowForResult(info, updateLauncher, AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build())
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        vm.playUpdateCheck = null
+        super.onDestroy()
     }
 
     override fun onStop() {

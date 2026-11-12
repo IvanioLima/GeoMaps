@@ -41,6 +41,8 @@ data class Settings(
     val activeProjectId: Long = 0,
     val keepScreenOn: Boolean = true,
     val telemetry: Boolean = false,
+    /** Conta Google usada na sincronização com o Drive ("" = desligada). */
+    val syncAccount: String = "",
 ) {
     /** Chave usada de fato: a informada pelo usuário ou a chave padrão do GeoMaps. */
     val googleKeyEffective get() = googleKey.ifBlank { DEFAULT_GOOGLE_KEY }
@@ -91,6 +93,7 @@ class SettingsStore(context: Context) {
             activeProjectId = sp.getLong("activeProjectId", 0),
             keepScreenOn = sp.getBoolean("keepScreenOn", d.keepScreenOn),
             telemetry = sp.getBoolean("telemetry", d.telemetry),
+            syncAccount = sp.getString("syncAccount", "")!!,
         )
     }
 
@@ -120,6 +123,7 @@ class SettingsStore(context: Context) {
             .putLong("activeProjectId", s.activeProjectId)
             .putBoolean("keepScreenOn", s.keepScreenOn)
             .putBoolean("telemetry", s.telemetry)
+            .putString("syncAccount", s.syncAccount)
             .apply()
         _flow.value = s
     }

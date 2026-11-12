@@ -897,47 +897,5 @@ fun ConverterDialog(vm: MainViewModel, s: Settings) {
     }
 }
 
-@Composable
-fun UpdateDialog(vm: MainViewModel, st: UpdateState) {
-    val i = st.info
-    val downloading = st.progress != null && st.apk == null && st.error == null
-    AlertDialog(
-        onDismissRequest = { if (!downloading) vm.update.value = null },
-        title = { Text("Atualização disponível") },
-        text = {
-            Column {
-                Text("GeoMaps ${i.versionName} (instalada: ${vm.app.updater.currentName})", fontWeight = FontWeight.SemiBold)
-                if (i.size > 0) Text("Tamanho: %.1f MB".format(Locale.US, i.size / 1e6), style = MaterialTheme.typography.bodySmall)
-                if (i.notes.isNotBlank()) {
-                    Gap()
-                    Text("Novidades", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-                    Text(i.notes, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.heightIn(max = 220.dp).verticalScroll(rememberScrollState()))
-                }
-                st.progress?.let { p ->
-                    Gap()
-                    androidx.compose.material3.LinearProgressIndicator(progress = { p }, modifier = Modifier.fillMaxWidth())
-                    Text(if (st.apk != null) "Download concluído" else "Baixando… ${(p * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
-                }
-                st.error?.let { Gap(); Text(it, color = MaterialTheme.colorScheme.error) }
-                Gap()
-                Text("Seus projetos, mapas offline e configurações são mantidos.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
-            }
-        },
-        confirmButton = {
-            when {
-                st.apk != null -> Button(onClick = { vm.installUpdate() }) { Text("Instalar") }
-                downloading -> {}
-                else -> Button(onClick = { vm.downloadUpdate() }) { Text(if (st.error != null) "Tentar de novo" else "Atualizar agora") }
-            }
-        },
-        dismissButton = {
-            if (!downloading) Row {
-                if (st.apk == null) TextButton(onClick = { vm.skipUpdate() }) { Text("Ignorar versão") }
-                TextButton(onClick = { vm.update.value = null }) { Text("Depois") }
-            }
-        },
-    )
-}
-
 @Suppress("unused")
 private val unusedBorder = BorderStroke(1.dp, Color.Gray)

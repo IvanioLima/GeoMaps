@@ -27,7 +27,9 @@ class Repo(private val context: Context, val db: Db, val media: MediaStore, val 
     private val _changes = MutableStateFlow(0L)
     /** Incrementa a cada alteração (a interface recarrega quando muda). */
     val changes: StateFlow<Long> = _changes
-    fun notifyChanged() { _changes.value = _changes.value + 1 }
+    /** Chamado a cada alteração (agenda a sincronização com o Drive). */
+    var onChanged: (() -> Unit)? = null
+    fun notifyChanged() { _changes.value = _changes.value + 1; onChanged?.invoke() }
 
     fun projects() = db.projects()
 

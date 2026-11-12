@@ -29,18 +29,18 @@ binresDir.walkTopDown().filter { it.isFile && it.name.endsWith(".b64") }.forEach
 android {
     sourceSets["main"].res.srcDir(File(binresOut, "res"))
     namespace = "br.geomaps"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "br.geomaps.app"
         minSdk = 26
-        targetSdk = 35
-        // Versão exibida ao usuário. O workflow "Publicar atualização" lê esta linha.
-        val appVersion = "1.0.0"
-        // No GitHub Actions o número da compilação vira o versionCode: toda build nova é "mais nova"
+        targetSdk = 36
+        // Versão exibida ao usuário (Google Play). O número da compilação do GitHub Actions vira o
+        // versionCode, que o Play exige sempre crescente.
+        val appVersion = "1.1.0"
         val run = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
         versionCode = run ?: 2
-        versionName = if (run != null) "$appVersion (build $run)" else "$appVersion-local"
+        versionName = if (run != null) appVersion else "$appVersion-local"
     }
 
     signingConfigs {
@@ -102,6 +102,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
     implementation("org.maplibre.gl:android-sdk:11.8.8")
+    // Login Google (autorização do Drive) e atualizações pelo Google Play
+    implementation("com.google.android.gms:play-services-auth:21.2.0")
+    implementation("com.google.android.play:app-update:2.1.0")
     implementation("org.locationtech.jts:jts-core:1.20.0")
 
     testImplementation("junit:junit:4.13.2")

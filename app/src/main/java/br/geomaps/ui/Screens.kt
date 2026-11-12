@@ -27,6 +27,9 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.CloudDone
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
@@ -106,12 +109,27 @@ fun SectionTitle(t: String) = Text(t, style = MaterialTheme.typography.titleSmal
 fun ProjectsScreen(vm: MainViewModel, onImport: (Long?) -> Unit) {
     val projects by vm.projects.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
+    val sync by vm.syncState.collectAsStateWithLifecycle()
     FullScreen("Meus Mapas", { vm.screen.value = Screen.NONE }, actions = {
+        if (settings.syncAccount.isNotBlank()) IconButton(onClick = { vm.syncNow() }, enabled = !sync.running) {
+            Icon(Icons.Default.Sync, "Sincronizar", tint = Color.White)
+        }
         TextButton(onClick = { onImport(null) }) { Text("Importar", color = Color.White) }
         IconButton(onClick = { vm.dialog.value = Dialog.NewProject() }) { Icon(Icons.Default.Add, "Novo", tint = Color.White) }
     }) {
         Text("Marque os projetos visíveis (podem ser sobrepostos). O projeto ativo recebe os novos elementos.",
             style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(12.dp))
+        if (settings.syncAccount.isNotBlank()) Text(
+            when {
+                sync.running -> "Sincronizando com o Google Drive…"
+                sync.error != null -> sync.error!!
+                sync.lastSync > 0 -> "Google Drive: sincronizado em " + SimpleDateFormat("dd/MM HH:mm", Locale("pt", "BR")).format(sync.lastSync)
+                else -> "Google Drive: aguardando a primeira sincronização"
+            },
+            style = MaterialTheme.typography.labelSmall,
+            color = if (sync.error != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(horizontal = 12.dp),
+        )
         LazyColumn(Modifier.fillMaxSize()) {
             items(projects, key = { it.id }) { p ->
                 var menu by remember { mutableStateOf(false) }
@@ -121,6 +139,15 @@ fun ProjectsScreen(vm: MainViewModel, onImport: (Long?) -> Unit) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(p.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (p.id == settings.activeProjectId) Text("  ATIVO", color = MaterialTheme.colorScheme.secondary, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            if (settings.syncAccount.isNotBlank()) {
+                                Spacer(Modifier.width(6.dp))
+                                Icon(
+                                    if (p.inCloud && !p.pendingSync) Icons.Default.CloudDone else Icons.Default.CloudUpload,
+                                    if (p.inCloud && !p.pendingSync) "Sincronizado" else "Aguardando envio",
+                                    tint = if (p.inCloud && !p.pendingSync) MaterialTheme.colorScheme.primary else Color.Gray,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                            }
                         }
                         Text("${p.featureCount} elemento(s) · atualizado em " + SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("pt", "BR")).format(p.updated),
                             style = MaterialTheme.typography.bodySmall)
@@ -223,6 +250,8 @@ fun SettingsScreen(vm: MainViewModel) {
     val st = vm.app.settings
     FullScreen("Configurações", { vm.screen.value = Screen.NONE }) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+            SyncSettings(vm, s)
+
             SectionTitle("Atualização do GPS")
             for (p in GpsProfile.entries) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { st.update { it.copy(gpsProfile = p) } }) {
                 RadioButton(s.gpsProfile == p, { st.update { it.copy(gpsProfile = p) } }); Text(p.label + if (p == GpsProfile.HIGH) " — padrão" else "")
@@ -309,6 +338,46 @@ fun SettingsScreen(vm: MainViewModel) {
             Text("Pasta: Android/data/br.geomaps.app/files/backups. Para guardar no Google Drive use Menu → Fazer backup.", style = MaterialTheme.typography.labelSmall, color = Color.Gray)
             Gap(24)
         }
+    }
+}
+
+/** Seção "Sincronização com o Google Drive" das configurações. */
+@Composable
+fun SyncSettings(vm: MainViewModel, s: Settings) {
+    val sync by vm.syncState.collectAsStateWithLifecycle()
+    val authLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+        if (res.resultCode == android.app.Activity.RESULT_OK) vm.onSyncAuthResult(res.data) else vm.toast("Autorização cancelada")
+    }
+    fun connect() = vm.startSyncSignIn { pi ->
+        authLauncher.launch(androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build())
+    }
+    SectionTitle("Sincronização com o Google Drive")
+    Text("Mantém os projetos de Meus Mapas iguais em todos os aparelhos conectados à mesma conta Google. Os dados ficam numa pasta oculta do GeoMaps no seu Drive.",
+        style = MaterialTheme.typography.bodySmall)
+    Gap(6)
+    if (s.syncAccount.isBlank()) {
+        Button(onClick = { connect() }) { Text("Conectar conta Google") }
+    } else {
+        Text("Conta: ${s.syncAccount}", fontWeight = FontWeight.SemiBold)
+        val last = if (sync.lastSync > 0) SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("pt", "BR")).format(sync.lastSync) else "nunca"
+        Text(
+            when {
+                sync.running -> "Sincronizando…"
+                sync.error != null -> sync.error!!
+                else -> "Última sincronização: $last"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = if (sync.error != null) MaterialTheme.colorScheme.error else Color.Gray,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+            Button(onClick = { vm.syncNow() }, enabled = !sync.running) { Text("Sincronizar agora") }
+            if (sync.needsSignIn) OutlinedButton(onClick = { connect() }) { Text("Reconectar") }
+            TextButton(onClick = {
+                vm.dialog.value = Dialog.Confirm("Desligar sincronização", "Os projetos continuam neste aparelho e no Drive, mas deixam de ser sincronizados.") { vm.disconnectSync() }
+            }) { Text("Desligar") }
+        }
+        Text("Sincroniza ao abrir o app, alguns segundos após cada alteração e quando você toca em Sincronizar. Se o mesmo projeto for editado em dois aparelhos antes de sincronizar, as duas versões são mantidas (a deste aparelho fica como \"(conflito …)\").",
+            style = MaterialTheme.typography.labelSmall, color = Color.Gray)
     }
 }
 
@@ -454,7 +523,7 @@ fun AboutScreen(vm: MainViewModel) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
             Text("GeoMaps ${br.geomaps.BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.primary)
             Text("Gestão de dados espaciais e edição avançada de KML, KMZ, GPX e Shapefile.")
-            OutlinedButton(onClick = { vm.checkUpdate(manual = true) }, modifier = Modifier.padding(top = 8.dp)) { Text("Verificar atualizações") }
+            OutlinedButton(onClick = { vm.playUpdateCheck?.invoke(true) }, modifier = Modifier.padding(top = 8.dp)) { Text("Verificar atualizações no Google Play") }
             SectionTitle("Fontes de dados")
             Text("• OpenStreetMap © colaboradores do OSM (ODbL)\n• OpenFreeMap / OpenMapTiles (mapa vetorial)\n• OpenTopoMap (CC-BY-SA)\n• Esri World Imagery © Esri e fornecedores\n• Google Map Tiles API © Google (somente online)\n• Copernicus DEM GLO-30 © DLR/Airbus, ESA\n• SRTM (NASA/USGS) via AWS Terrain Tiles",
                 style = MaterialTheme.typography.bodySmall)
