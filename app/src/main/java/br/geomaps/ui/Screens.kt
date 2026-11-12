@@ -346,7 +346,7 @@ fun SettingsScreen(vm: MainViewModel) {
 fun SyncSettings(vm: MainViewModel, s: Settings) {
     val sync by vm.syncState.collectAsStateWithLifecycle()
     val authLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
-        if (res.resultCode == android.app.Activity.RESULT_OK) vm.onSyncAuthResult(res.data) else vm.toast("Autorização cancelada")
+        vm.onSyncAuthResult(res.resultCode, res.data)
     }
     fun connect() = vm.startSyncSignIn { pi ->
         authLauncher.launch(androidx.activity.result.IntentSenderRequest.Builder(pi.intentSender).build())

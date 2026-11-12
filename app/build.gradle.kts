@@ -37,7 +37,7 @@ android {
         targetSdk = 36
         // Versão exibida ao usuário (Google Play). O número da compilação do GitHub Actions vira o
         // versionCode, que o Play exige sempre crescente.
-        val appVersion = "1.1.0"
+        val appVersion = "1.1.1"
         val run = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
         versionCode = run ?: 2
         versionName = if (run != null) appVersion else "$appVersion-local"

@@ -196,14 +196,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val pi = r.pendingIntent
                 if (r.hasResolution() && pi != null) launch(pi) else finishSyncSignIn(r.accessToken, r)
             }
-            .addOnFailureListener { toast("Não foi possível conectar ao Google: ${it.message}") }
+            .addOnFailureListener { toast(authError(it)) }
     }
 
-    fun onSyncAuthResult(data: Intent?) {
+    fun onSyncAuthResult(resultCode: Int, data: Intent?) {
+        if (data == null) { toast(if (resultCode == android.app.Activity.RESULT_OK) "Autorização sem resposta do Google" else "Autorização cancelada"); return }
         runCatching {
             val r = com.google.android.gms.auth.api.identity.Identity.getAuthorizationClient(app).getAuthorizationResultFromIntent(data)
             finishSyncSignIn(r.accessToken, r)
-        }.onFailure { toast("Autorização cancelada") }
+        }.onFailure { e -> toast(authError(e)) }
+    }
+
+    /** Mensagem com o código real do Google (ex.: 10 = app não cadastrado no Google Cloud com este SHA-1). */
+    private fun authError(e: Throwable): String {
+        val code = (e as? com.google.android.gms.common.api.ApiException)?.statusCode
+            ?: return "Falha na autorização: ${e.message ?: e.javaClass.simpleName}"
+        val name = com.google.android.gms.common.api.CommonStatusCodes.getStatusCodeString(code)
+        return when (code) {
+            com.google.android.gms.common.api.CommonStatusCodes.CANCELED, 12501 -> "Autorização cancelada (código $code)"
+            com.google.android.gms.common.api.CommonStatusCodes.DEVELOPER_ERROR ->
+                "Google recusou: app não cadastrado (código 10 – confira pacote e SHA-1 do cliente OAuth Android)"
+            else -> "Google recusou a autorização: código $code ($name)"
+        }
     }
 
     @Suppress("DEPRECATION")

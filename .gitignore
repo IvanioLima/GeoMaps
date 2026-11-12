@@ -9,3 +9,10 @@ build/
 .cxx
 app/build/
 app/release/
+
+# Ferramentas e arquivos de chave do Google Play (nunca enviar ao GitHub)
+pepk*.jar
+encryption_public_key.pem
+*_signing_key.zip
+*.keystore
+*.jks

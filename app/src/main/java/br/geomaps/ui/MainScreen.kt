@@ -53,9 +53,7 @@ import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.RadioButtonChecked
 import androidx.compose.material.icons.filled.Remove
-import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -154,9 +152,6 @@ fun MainScreen(vm: MainViewModel) {
         if (uri != null) vm.importUri(uri, importTarget)
         importTarget = null
     }
-    val restoreFile = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) vm.importUri(uri)
-    }
     val createFile = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { uri ->
         val data = pendingExport
         pendingExport = null
@@ -236,10 +231,8 @@ fun MainScreen(vm: MainViewModel) {
                     item(Icons.Default.Backup, "Fazer backup (Drive/arquivo)") {
                         backupFile.launch("geomaps_backup_" + SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(System.currentTimeMillis()) + ".geomaps")
                     }
-                    item(Icons.Default.Restore, "Restaurar backup") { restoreFile.launch(arrayOf("*/*")) }
                     item(Icons.Default.Settings, "Configurações") { vm.screen.value = Screen.SETTINGS }
                     item(Icons.Default.Sync, "Sincronizar com o Google Drive") { vm.syncNow() }
-                    item(Icons.Default.SystemUpdate, "Verificar atualizações") { vm.playUpdateCheck?.invoke(true) }
                     item(Icons.Default.Info, "Sobre") { vm.screen.value = Screen.ABOUT }
                     Gap(16)
                 }
